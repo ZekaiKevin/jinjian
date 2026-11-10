@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN" class="no-wp">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>今笺</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage">
+
+  <div id="panel" class="layer from-right" aria-hidden="true">
+    <div class="glass"></div>
+    <section id="panel-body" class="scroll" aria-label="详情">
+      <div class="row">
+        <span id="p-kind" class="chip">日程</span>
+        <span class="grow"></span>
+        <button id="p-del" type="button" class="icon tap" aria-label="删除">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M5.5 6l.8 10a1 1 0 0 0 1 1h5.4a1 1 0 0 0 1-1l.8-10"/></svg>
+        </button>
+        <button id="p-close" type="button" class="icon tap" aria-label="关闭">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg>
+        </button>
+      </div>
+
+      <input id="p-title" class="field title" type="text" placeholder="标题" aria-label="标题" autocomplete="off">
+
+      <div id="p-toggles" class="row gap8">
+        <button id="p-done" type="button" class="pill tap" aria-pressed="false">完成</button>
+        <button id="p-star" type="button" class="pill tap" aria-pressed="false">重点</button>
+      </div>
+
+      <div class="frow">
+        <label for="p-date">日期</label>
+        <input id="p-date" class="field" type="date">
+      </div>
+      <div id="p-time-row" class="frow">
+        <label for="p-start">时间</label>
+        <div class="row gap8">
+          <input id="p-start" class="field" type="time">
+          <span aria-hidden="true">–</span>
+          <input id="p-end" class="field" type="time" aria-label="结束时间">
+        </div>
+      </div>
+      <div id="p-due-row" class="frow">
+        <label for="p-due">截止</label>
+        <input id="p-due" class="field" type="time">
+      </div>
+      <div class="frow">
+        <label for="p-place">地点</label>
+        <input id="p-place" class="field" type="text" autocomplete="off">
+      </div>
+
+      <div class="block">
+        <div class="row between">
+          <h2>子任务</h2>
+          <span id="p-subcount" class="meta"></span>
+        </div>
+        <div id="p-subs"></div>
+        <form id="p-subform" class="row gap6">
+          <input id="p-sub" class="field round" type="text" placeholder="添加" aria-label="添加子任务" autocomplete="off">
+          <button type="submit" class="icon ring tap" aria-label="添加子任务">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
+        </form>
+      </div>
+
+      <div class="block">
+        <label for="p-notes" class="note-label">备注</label>
+        <textarea id="p-notes" class="notes" rows="3"></textarea>
+      </div>
+    </section>
+  </div>
+
+  <div id="shell" class="rise">
+    <div class="glass"></div>
+    <main id="widget">
+
+      <header class="row gap10">
+        <div id="h-day" class="day">–</div>
+        <div class="grow col gap2">
+          <div id="h-month" class="month"></div>
+          <div id="h-week" class="week"></div>
+        </div>
+        <button id="lock" type="button" class="icon tap" aria-pressed="false" aria-label="鼠标穿透">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 3l12.5 5.2-5.2 1.9-1.9 5.2z"/></svg>
+        </button>
+      </header>
+
+      <div id="pips-row" class="row gap10">
+        <div id="pips" aria-hidden="true"></div>
+        <span id="count" class="count"></span>
+      </div>
+
+      <button id="now" type="button" class="now tap">
+        <span class="row gap8">
+          <span class="now-dot"></span>
+          <span id="now-label" class="now-label grow"></span>
+          <span id="now-range" class="now-range"></span>
+        </span>
+        <span id="now-title" class="now-title"></span>
+        <span class="bar"><span id="now-bar" class="bar-fill"></span></span>
+        <span class="row between now-foot">
+          <span id="now-left" class="soft"></span>
+          <span id="now-right" class="strong"></span>
+        </span>
+      </button>
+
+      <section class="sec">
+        <div class="sec-head">
+          <h2 class="grow">日程</h2>
+          <button id="add-event" type="button" class="icon small tap" aria-label="新建日程">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
+        </div>
+        <div id="events" class="list scroll"></div>
+      </section>
+
+      <section class="sec fill">
+        <div class="sec-head">
+          <h2 class="grow">待办</h2>
+          <button id="add-todo" type="button" class="icon small tap" aria-label="新建待办">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
+        </div>
+        <div id="todos" class="list scroll fill"></div>
+      </section>
+
+      <section class="note">
+        <label for="note">便签</label>
+        <textarea id="note" rows="2" spellcheck="false"></textarea>
+      </section>
+
+      <form id="quick" class="quick">
+        <input id="quick-input" type="text" placeholder="记一笔" aria-label="快速记录" autocomplete="off">
+        <button type="submit" class="quick-btn tap" aria-label="添加">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+        </button>
+      </form>
+    </main>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
