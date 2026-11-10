@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" class="no-wp">
+<html lang="zh-CN" class="no-wp" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,127 +9,244 @@
 <body>
 <div id="stage">
 
+  <!-- 详情：平时在小组件左侧；展开日历时变成贴着日程的气泡 -->
   <div id="panel" class="layer from-right" aria-hidden="true">
+    <span class="arrow" aria-hidden="true"></span>
+    <div class="zoom">
+      <div class="glass"></div>
+      <section id="panel-body" class="scroll" aria-label="详情">
+        <div class="row gap6">
+          <span id="p-kind" class="chip">日程</span>
+          <span id="p-cal" class="meta grow"></span>
+          <button id="p-del" type="button" class="icon tap" data-act="p-del" aria-label="删除">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M5.5 6l.8 10a1 1 0 0 0 1 1h5.4a1 1 0 0 0 1-1l.8-10"/></svg>
+          </button>
+          <button type="button" class="icon tap" data-act="p-close" aria-label="关闭">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg>
+          </button>
+        </div>
+
+        <input id="p-title" class="field title" type="text" placeholder="标题" aria-label="标题" autocomplete="off">
+        <p id="p-ro" class="hint" hidden>重复日程，请在 Apple 日历里修改</p>
+
+        <div id="p-toggles" class="row gap8">
+          <button id="p-done" type="button" class="pill tap" data-act="p-done" aria-pressed="false">完成</button>
+          <button id="p-star" type="button" class="pill tap" data-act="p-star" aria-pressed="false">重点</button>
+        </div>
+
+        <div class="frow">
+          <label for="p-date">日期</label>
+          <input id="p-date" class="field" type="date">
+        </div>
+        <div id="p-time-row" class="frow">
+          <label for="p-start">时间</label>
+          <div class="row gap8">
+            <input id="p-start" class="field" type="time">
+            <span aria-hidden="true">–</span>
+            <input id="p-end" class="field" type="time" aria-label="结束时间">
+          </div>
+        </div>
+        <div id="p-due-row" class="frow">
+          <label for="p-due">截止</label>
+          <input id="p-due" class="field" type="time">
+        </div>
+        <div class="frow">
+          <label for="p-place">地点</label>
+          <input id="p-place" class="field" type="text" autocomplete="off">
+        </div>
+        <div id="p-remind-row" class="frow">
+          <label for="p-remind">提醒</label>
+          <select id="p-remind" class="field">
+            <option value="none">不提醒</option>
+            <option value="0">到点</option>
+            <option value="5">提前 5 分钟</option>
+            <option value="10">提前 10 分钟</option>
+            <option value="30">提前 30 分钟</option>
+            <option value="60">提前 1 小时</option>
+          </select>
+        </div>
+
+        <div class="block">
+          <div class="row between">
+            <h2>子任务</h2>
+            <span id="p-subcount" class="meta"></span>
+          </div>
+          <div id="p-subs"></div>
+          <form id="p-subform" class="row gap6">
+            <input id="p-sub" class="field round" type="text" placeholder="添加" aria-label="添加子任务" autocomplete="off">
+            <button type="submit" class="icon ring tap" aria-label="添加子任务">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+            </button>
+          </form>
+        </div>
+
+        <div class="block">
+          <label for="p-notes" class="note-label">备注</label>
+          <textarea id="p-notes" class="notes" rows="3"></textarea>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- 设置 -->
+  <div id="settings" class="layer from-right" aria-hidden="true">
     <div class="glass"></div>
-    <section id="panel-body" class="scroll" aria-label="详情">
+    <section id="settings-body" class="scroll" aria-label="设置">
       <div class="row">
-        <span id="p-kind" class="chip">日程</span>
-        <span class="grow"></span>
-        <button id="p-del" type="button" class="icon tap" aria-label="删除">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M5.5 6l.8 10a1 1 0 0 0 1 1h5.4a1 1 0 0 0 1-1l.8-10"/></svg>
-        </button>
-        <button id="p-close" type="button" class="icon tap" aria-label="关闭">
+        <h1 class="grow">设置</h1>
+        <button type="button" class="icon tap" data-act="s-close" aria-label="关闭">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg>
         </button>
       </div>
 
-      <input id="p-title" class="field title" type="text" placeholder="标题" aria-label="标题" autocomplete="off">
-
-      <div id="p-toggles" class="row gap8">
-        <button id="p-done" type="button" class="pill tap" aria-pressed="false">完成</button>
-        <button id="p-star" type="button" class="pill tap" aria-pressed="false">重点</button>
-      </div>
-
-      <div class="frow">
-        <label for="p-date">日期</label>
-        <input id="p-date" class="field" type="date">
-      </div>
-      <div id="p-time-row" class="frow">
-        <label for="p-start">时间</label>
-        <div class="row gap8">
-          <input id="p-start" class="field" type="time">
-          <span aria-hidden="true">–</span>
-          <input id="p-end" class="field" type="time" aria-label="结束时间">
+      <div class="block">
+        <h2>主题</h2>
+        <div class="seg" id="s-theme">
+          <button type="button" class="tap" data-act="theme" data-v="dark">深色</button>
+          <button type="button" class="tap" data-act="theme" data-v="light">浅色</button>
+          <button type="button" class="tap" data-act="theme" data-v="system">跟随系统</button>
         </div>
-      </div>
-      <div id="p-due-row" class="frow">
-        <label for="p-due">截止</label>
-        <input id="p-due" class="field" type="time">
-      </div>
-      <div class="frow">
-        <label for="p-place">地点</label>
-        <input id="p-place" class="field" type="text" autocomplete="off">
       </div>
 
       <div class="block">
         <div class="row between">
-          <h2>子任务</h2>
-          <span id="p-subcount" class="meta"></span>
+          <label for="s-tint" class="h2">不透明度</label>
+          <span id="s-tint-text" class="strong"></span>
         </div>
-        <div id="p-subs"></div>
-        <form id="p-subform" class="row gap6">
-          <input id="p-sub" class="field round" type="text" placeholder="添加" aria-label="添加子任务" autocomplete="off">
-          <button type="submit" class="icon ring tap" aria-label="添加子任务">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-          </button>
-        </form>
+        <input id="s-tint" type="range" min="20" max="95" step="1">
+      </div>
+
+      <div id="s-switches" class="col"></div>
+
+      <div class="block">
+        <h2>窗口层级</h2>
+        <div class="seg" id="s-layer">
+          <button type="button" class="tap" data-act="layer" data-v="desk">贴在桌面</button>
+          <button type="button" class="tap" data-act="layer" data-v="top">始终置顶</button>
+        </div>
       </div>
 
       <div class="block">
-        <label for="p-notes" class="note-label">备注</label>
-        <textarea id="p-notes" class="notes" rows="3"></textarea>
+        <h2>iCloud 日历</h2>
+        <form id="s-connect" class="col gap8">
+          <input id="s-user" class="field" type="email" placeholder="Apple ID 邮箱" aria-label="Apple ID 邮箱" autocomplete="off">
+          <input id="s-pass" class="field" type="password" placeholder="App 专用密码" aria-label="App 专用密码" autocomplete="off">
+          <button type="submit" class="pill solid tap">连接</button>
+        </form>
+        <div id="s-account" class="col gap8" hidden>
+          <div class="row gap8">
+            <span id="s-account-name" class="grow ellipsis"></span>
+            <button type="button" class="pill small tap" data-act="sync-now">同步</button>
+            <button type="button" class="pill small tap" data-act="disconnect">断开</button>
+          </div>
+          <div id="s-cals" class="col"></div>
+          <div class="frow wide">
+            <label for="s-target">新建日程存到</label>
+            <select id="s-target" class="field"></select>
+          </div>
+        </div>
+        <p id="s-status" class="hint" role="status"></p>
       </div>
     </section>
   </div>
 
   <div id="shell" class="rise">
     <div class="glass"></div>
-    <main id="widget">
 
+    <!-- 小组件 -->
+    <main id="widget" class="layer from-scale on">
       <header class="row gap10">
         <div id="h-day" class="day">–</div>
         <div class="grow col gap2">
           <div id="h-month" class="month"></div>
           <div id="h-week" class="week"></div>
         </div>
-        <button id="lock" type="button" class="icon tap" aria-pressed="false" aria-label="鼠标穿透">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 3l12.5 5.2-5.2 1.9-1.9 5.2z"/></svg>
-        </button>
+        <div class="row">
+          <button id="b-view" type="button" class="icon tap" data-act="view" aria-pressed="false" aria-label="日历">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="3"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg>
+          </button>
+          <button id="b-lock" type="button" class="icon tap" data-act="lock" aria-pressed="false" aria-label="鼠标穿透">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 3l12.5 5.2-5.2 1.9-1.9 5.2z"/></svg>
+          </button>
+          <button id="b-settings" type="button" class="icon tap" data-act="settings" aria-pressed="false" aria-label="设置">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h7M16 6h1M3 14h1M10 14h7"/><circle cx="13" cy="6" r="2.2"/><circle cx="7" cy="14" r="2.2"/></svg>
+          </button>
+          <button type="button" class="icon tap" data-act="compact" aria-label="收起">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l5-5 5 5"/></svg>
+          </button>
+        </div>
       </header>
 
-      <div id="pips-row" class="row gap10">
-        <div id="pips" aria-hidden="true"></div>
-        <span id="count" class="count"></span>
+      <div class="views">
+        <div id="day" class="layer from-up on">
+          <div id="pips-row" class="row gap10">
+            <div id="pips" class="pips" aria-hidden="true"></div>
+            <span id="count" class="count"></span>
+          </div>
+
+          <button id="now" type="button" class="now tap" data-act="now-open">
+            <span class="row gap8">
+              <span class="now-dot"></span>
+              <span id="now-label" class="now-label grow"></span>
+              <span id="now-range" class="now-range"></span>
+            </span>
+            <span id="now-title" class="now-title"></span>
+            <span class="bar"><span id="now-bar" class="bar-fill"></span></span>
+            <span class="row between now-foot">
+              <span id="now-left" class="soft"></span>
+              <span id="now-right" class="strong"></span>
+            </span>
+          </button>
+
+          <button id="back-today" type="button" class="pill small back tap" data-act="go-today" hidden>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3L4.5 7l4 4"/></svg>
+            <span>今天</span>
+          </button>
+
+          <section class="sec">
+            <div class="sec-head">
+              <h2 class="grow">日程</h2>
+              <button type="button" class="icon small tap" data-act="add-event" aria-label="新建日程">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+            </div>
+            <div id="events" class="list scroll"></div>
+          </section>
+
+          <section class="sec fill">
+            <div class="sec-head">
+              <h2 class="grow">待办</h2>
+              <button type="button" class="icon small tap" data-act="add-todo" aria-label="新建待办">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+            </div>
+            <div id="todos" class="list scroll fill"></div>
+          </section>
+
+          <section class="note">
+            <label for="note">便签</label>
+            <textarea id="note" rows="2" spellcheck="false"></textarea>
+          </section>
+        </div>
+
+        <div id="cal" class="layer from-up">
+          <div class="row gap2 cal-head">
+            <h2 id="cal-title" class="grow cal-title"></h2>
+            <button type="button" class="pill small tap" data-act="go-today">今天</button>
+            <button type="button" class="icon small tap" data-act="prev-month" aria-label="上个月">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4L6 9l5 5"/></svg>
+            </button>
+            <button type="button" class="icon small tap" data-act="next-month" aria-label="下个月">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l5 5-5 5"/></svg>
+            </button>
+            <button type="button" class="icon small tap" data-act="big-open" aria-label="展开月视图">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 3.5h5v5M16.5 3.5L11 9M8.5 16.5h-5v-5M3.5 16.5L9 11"/></svg>
+            </button>
+          </div>
+          <div class="weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+          <div id="cal-grid" class="cal-grid"></div>
+        </div>
       </div>
-
-      <button id="now" type="button" class="now tap">
-        <span class="row gap8">
-          <span class="now-dot"></span>
-          <span id="now-label" class="now-label grow"></span>
-          <span id="now-range" class="now-range"></span>
-        </span>
-        <span id="now-title" class="now-title"></span>
-        <span class="bar"><span id="now-bar" class="bar-fill"></span></span>
-        <span class="row between now-foot">
-          <span id="now-left" class="soft"></span>
-          <span id="now-right" class="strong"></span>
-        </span>
-      </button>
-
-      <section class="sec">
-        <div class="sec-head">
-          <h2 class="grow">日程</h2>
-          <button id="add-event" type="button" class="icon small tap" aria-label="新建日程">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-          </button>
-        </div>
-        <div id="events" class="list scroll"></div>
-      </section>
-
-      <section class="sec fill">
-        <div class="sec-head">
-          <h2 class="grow">待办</h2>
-          <button id="add-todo" type="button" class="icon small tap" aria-label="新建待办">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-          </button>
-        </div>
-        <div id="todos" class="list scroll fill"></div>
-      </section>
-
-      <section class="note">
-        <label for="note">便签</label>
-        <textarea id="note" rows="2" spellcheck="false"></textarea>
-      </section>
 
       <form id="quick" class="quick">
         <input id="quick-input" type="text" placeholder="记一笔" aria-label="快速记录" autocomplete="off">
@@ -138,8 +255,82 @@
         </button>
       </form>
     </main>
+
+    <!-- 展开的月视图 -->
+    <section id="big" class="layer from-scale" aria-label="月视图">
+      <div class="row gap6 big-head">
+        <h2 id="big-title" class="grow big-title"></h2>
+        <button type="button" class="pill accent tap" data-act="add-event">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+          <span>日程</span>
+        </button>
+        <button type="button" class="pill tap" data-act="go-today">今天</button>
+        <button type="button" class="icon tap" data-act="prev-month" aria-label="上个月">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4L6 9l5 5"/></svg>
+        </button>
+        <button type="button" class="icon tap" data-act="next-month" aria-label="下个月">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l5 5-5 5"/></svg>
+        </button>
+        <button type="button" class="icon tap" data-act="big-close" aria-label="收起月视图">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5L11 9M11 4.5V9h4.5M3.5 16.5L9 11M9 15.5V11H4.5"/></svg>
+        </button>
+      </div>
+      <div class="weekdays wide" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+      <div class="big-wrap">
+        <div id="big-grid" class="big-grid"></div>
+        <div id="pop" class="layer from-scale" aria-hidden="true">
+          <div class="row gap2 pop-head">
+            <h3 id="pop-title" class="grow"></h3>
+            <button type="button" class="icon mini tap" data-act="pop-add" aria-label="在这天新建日程">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+            </button>
+            <button type="button" class="icon mini tap" data-act="pop-close" aria-label="关闭">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>
+            </button>
+          </div>
+          <div id="pop-list" class="col scroll"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 迷你专注条 -->
+    <section id="compact" class="layer from-scale" aria-label="迷你专注条">
+      <div class="row gap8">
+        <span class="now-dot"></span>
+        <span id="c-label" class="now-label grow"></span>
+        <span id="c-range" class="now-range"></span>
+        <button type="button" class="icon small tap" data-act="dock" aria-label="贴到屏幕边缘">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l5 5-5 5"/></svg>
+        </button>
+        <button type="button" class="icon small tap" data-act="expand" aria-label="展开">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7.5l5 5 5-5"/></svg>
+        </button>
+      </div>
+      <div id="c-title" class="now-title"></div>
+      <span class="bar"><span id="c-bar" class="bar-fill"></span></span>
+      <div class="row between now-foot">
+        <span id="c-left" class="strong"></span>
+        <span id="c-next" class="soft ellipsis"></span>
+      </div>
+      <div class="row gap10">
+        <div id="c-pips" class="pips" aria-hidden="true"></div>
+        <span id="c-count" class="count"></span>
+      </div>
+    </section>
   </div>
+
+  <!-- 贴边胶囊 -->
+  <button id="capsule" type="button" class="layer from-edge" data-act="expand" aria-label="展开小组件">
+    <span class="glass"></span>
+    <span class="now-dot"></span>
+    <span id="cap-title" class="cap-title"></span>
+    <span id="cap-left" class="cap-left"></span>
+  </button>
 </div>
+
+<script src="ics.js"></script>
+<script src="nlp.js"></script>
+<script src="caldav.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

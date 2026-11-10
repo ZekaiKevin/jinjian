@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>今笺 · 快速记录</title>
+<style>
+  :root { --curve: cubic-bezier(0.32, 0.72, 0, 1); color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; -webkit-user-select: none; }
+  body { display: flex; align-items: center; justify-content: center; font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif; font-size: 14px; color: #fff; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; padding: 0; background: none; }
+  button:focus-visible, input:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .box { width: 600px; display: flex; flex-direction: column; gap: 14px; padding: 20px; border-radius: 34px; border: 1px solid rgb(255 255 255 / 0.32); background: linear-gradient(155deg, rgb(255 255 255 / 0.16) 0%, rgb(255 255 255 / 0.03) 36%, rgb(255 255 255 / 0.08) 100%), rgb(22 18 36 / 0.94); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 18px 40px rgb(10 6 24 / 0.5); }
+  .box.show { animation: rise 0.4s var(--curve) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(-14px) scale(0.96); } to { opacity: 1; transform: none; } }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .grow { flex: 1 1 0; min-width: 0; }
+  #text { flex: 1 1 0; min-width: 0; height: 44px; border: 0; outline: 0; background: transparent; font-size: 20px; font-weight: 600; user-select: text; -webkit-user-select: text; }
+  #text::placeholder { color: rgb(255 255 255 / 0.7); }
+  .preview { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-height: 76px; padding: 14px 18px; border-radius: 22px; border: 1px solid rgb(255 255 255 / 0.18); background: rgb(255 255 255 / 0.1); }
+  .when { font-size: 13px; font-weight: 700; color: #ffb454; font-variant-numeric: tabular-nums; }
+  .what { font-size: 17px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: #ffe296; }
+  .seg { display: flex; gap: 4px; padding: 4px; border-radius: 24px; background: rgb(255 255 255 / 0.1); }
+  .seg button { height: 40px; padding: 0 20px; border-radius: 20px; transition: background-color 0.25s ease, color 0.25s ease, transform 0.25s var(--curve); }
+  .seg button[aria-pressed="true"] { background: #fff; color: #1a1730; font-weight: 700; }
+  .save { height: 44px; padding: 0 24px; border-radius: 22px; background: #ffb454; color: #1b1408; font-weight: 700; transition: transform 0.25s var(--curve); }
+  button:active { transform: scale(0.95); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<form id="box" class="box">
+  <div class="row">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#ffb454" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18l1-4L15.5 3.5a1.8 1.8 0 0 1 2.5 0l.5.5a1.8 1.8 0 0 1 0 2.5L8 17z"/><path d="M13.5 5.5l3 3"/></svg>
+    <input id="text" type="text" placeholder="记一笔" aria-label="快速记录" autocomplete="off">
+  </div>
+  <div class="preview" aria-live="polite">
+    <div id="when" class="when"></div>
+    <div id="what" class="what"></div>
+  </div>
+  <div class="row">
+    <div class="seg" id="kinds">
+      <button type="button" data-kind="event" aria-pressed="false">日程</button>
+      <button type="button" data-kind="todo" aria-pressed="false">待办</button>
+      <button type="button" data-kind="note" aria-pressed="false">便签</button>
+    </div>
+    <span class="grow"></span>
+    <button type="submit" class="save">保存</button>
+  </div>
+</form>
+<script src="nlp.js"></script>
+<script src="capture.js"></script>
+</body>
+</html>
