@@ -211,8 +211,12 @@ struct DavRes {
 async fn dav(req: DavReq) -> Result<DavRes, String> {
     let url = reqwest::Url::parse(&req.url).map_err(|e| e.to_string())?;
     let host = url.host_str().unwrap_or("");
-    if url.scheme() != "https" || !(host == "icloud.com" || host.ends_with(".icloud.com")) {
-        return Err("只允许访问 iCloud".into());
+    // 中国大陆的 Apple ID 由云上贵州运营，服务器在 icloud.com.cn
+    let allowed = ["icloud.com", "icloud.com.cn"]
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{}", d)));
+    if url.scheme() != "https" || !allowed {
+        return Err(format!("只允许访问 iCloud（{}）", host));
     }
     let pass = match req.pass {
         Some(p) if !p.is_empty() => p,

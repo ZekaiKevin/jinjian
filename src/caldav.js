@@ -3,7 +3,8 @@
 (function (global) {
   'use strict';
 
-  const ROOT = 'https://caldav.icloud.com/';
+  // 先试国际版；账号密码不被认，再试中国大陆版（云上贵州）。
+  const ROOTS = ['https://caldav.icloud.com/', 'https://caldav.icloud.com.cn/'];
   const CALDAV_NS = 'urn:ietf:params:xml:ns:caldav';
 
   const first = (el, name) => el.getElementsByTagNameNS('*', name)[0] || null;
@@ -38,10 +39,14 @@
 
     // 找出这个账号下所有能放日程的日历。
     async function discover(user, pass) {
-      let r = await req('PROPFIND', ROOT, {
-        user: user, pass: pass, headers: [['Depth', '0']],
-        body: '<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>',
-      });
+      let r = null;
+      for (const root of ROOTS) {
+        r = await req('PROPFIND', root, {
+          user: user, pass: pass, headers: [['Depth', '0']],
+          body: '<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>',
+        });
+        if (r.status !== 401) break;
+      }
       if (r.status >= 400) throw fail(r);
       const principalHref = text(first(xml(r.body), 'current-user-principal'), 'href');
       if (!principalHref) throw new Error('没有找到账号信息');
