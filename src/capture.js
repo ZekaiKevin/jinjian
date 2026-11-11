@@ -79,6 +79,8 @@
     call('capture_submit', { payload: JSON.stringify(payload) }).catch(() => {});
     $('text').value = '';
   });
+  // 点“?”不抢输入框的焦点
+  document.querySelector('.help').addEventListener('mousedown', (e) => e.preventDefault());
   window.addEventListener('blur', hide);
 
   if (TAURI && TAURI.event) TAURI.event.listen('capture-open', reset);

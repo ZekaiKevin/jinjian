@@ -13,15 +13,18 @@ const $ = (id) => document.getElementById(id);
 const WK = '日一二三四五六';
 const CHECK = '<svg class="pop" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6.5"/></svg>';
 const CHECK_STILL = CHECK.replace('class="pop" ', '');
+const GHOST = CHECK.replace('class="pop"', 'class="ghost"'); // 悬停在圆圈上时预览的对勾
 const STAR = '<svg class="star" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" role="img" aria-label="重点"><path d="M7 1.2l1.8 3.7 4 .6-2.9 2.8.7 4L7 10.4l-3.6 1.9.7-4L1.2 5.5l4-.6z"/></svg>';
 const CROSS = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>';
 
 const SWITCHES = [
-  { k: 'blur', name: '背景模糊' },
-  { k: 'lock', name: '鼠标穿透' },
-  { k: 'carry', name: '未完成顺延到明天' },
+  { k: 'blur', name: '背景模糊', tip: '关掉后玻璃里不再画模糊的壁纸，只留半透明的底色，更省资源。' },
+  { k: 'lock', name: '鼠标穿透', tip: '开启后鼠标会穿过小组件，点到后面的桌面。\n按 Alt + L，或在托盘图标的菜单里关闭。' },
+  { k: 'carry', name: '未完成顺延到明天', tip: '当天没勾掉的待办，第二天会自动出现在当天的列表里，不标逾期。' },
   { k: 'autostart', name: '开机自启' },
 ];
+const TIP_CONNECT = '填 Apple ID 邮箱和“App 专用密码”（不是登录密码）。\n专用密码在 account.apple.com →“登录与安全”→“App 专用密码”里生成，保存在 Windows 凭据管理器里。';
+const TIP_SYNC = '每 10 分钟同步一次，只同步打开的日历。\n重复日程（比如每周的课）在这里只读，请在 Apple 日历里改。\n不重复的日程可以直接改，会写回 iCloud。\n待办只存在本机。';
 
 // ---------- 小工具 ----------
 
@@ -78,6 +81,7 @@ const S = {
   locked: false,
   syncing: false,
   status: '',
+  foldSync: null,   // 设置里 iCloud 区域是否展开；null 表示按默认（已连接就收起）
 };
 let R = [];           // 同步来的日程展开后的具体场次
 let saveTimer = null;
@@ -506,7 +510,7 @@ function renderDay(map, info) {
     if (t.id === S.sel) cls.push('sel');
     return '<div class="' + cls.join(' ') + '">'
       + '<button type="button" class="check tap" data-act="toggle" data-id="' + esc(t.id) + '" aria-pressed="' + (t.done ? 'true' : 'false') + '" aria-label="' + esc((t.done ? '标为未完成：' : '标为完成：') + name) + '">'
-      + '<span class="box' + (fresh ? ' jelly' : '') + '">' + (t.done ? (fresh ? CHECK : CHECK_STILL) : '') + '</span>'
+      + '<span class="box' + (fresh ? ' jelly' : '') + '">' + (t.done ? (fresh ? CHECK : CHECK_STILL) : GHOST) + '</span>'
       + '</button>'
       + '<button type="button" class="open grow tap" data-act="open" data-id="' + esc(t.id) + '">'
       + '<span class="name">' + esc(name) + '</span>'
@@ -786,9 +790,26 @@ function applySettings() {
   root.classList.toggle('no-blur', !s.blur);
 }
 
-function switchHtml(act, key, name, on, extra) {
-  return '<button type="button" class="sw" role="switch" data-act="' + act + '" data-k="' + esc(key) + '" aria-checked="' + (on ? 'true' : 'false') + '">'
-    + (extra || '') + '<span class="name ellipsis">' + esc(name) + '</span><span class="track"><span class="knob"></span></span></button>';
+function helpHtml(tip) {
+  return '<button type="button" class="help" data-tip="' + esc(tip) + '" aria-label="说明">?</button>';
+}
+
+// 一行开关：名字、可选的提示、开关本身（提示按钮不能套在开关按钮里，所以分开）。
+function switchHtml(act, key, name, on, opt) {
+  const o = opt || {};
+  return '<div class="swrow">' + (o.before || '') + '<span class="name ellipsis">' + esc(name) + '</span>' + (o.tip ? helpHtml(o.tip) : '')
+    + '<button type="button" class="sw" role="switch" data-act="' + act + '" data-k="' + esc(key) + '" aria-checked="' + (on ? 'true' : 'false') + '" aria-label="' + esc(name) + '">'
+    + '<span class="track"><span class="knob"></span></span></button></div>';
+}
+
+function applyFold() {
+  const sync = S.settings.sync;
+  const open = S.foldSync === null ? !sync.on : S.foldSync;
+  $('s-sync').classList.toggle('open', open);
+  $('s-fold').setAttribute('aria-expanded', open ? 'true' : 'false');
+  $('s-fold-meta').textContent = sync.on ? sync.cals.filter((c) => c.on).length + ' 个日历' : '未连接';
+  $('s-sync-help').dataset.tip = sync.on ? TIP_SYNC : TIP_CONNECT;
+  return open;
 }
 
 function fillSettings() {
@@ -797,13 +818,14 @@ function fillSettings() {
   Array.prototype.forEach.call($('s-layer').children, (b) => b.setAttribute('aria-pressed', (b.dataset.v === 'top') === !!s.top ? 'true' : 'false'));
   $('s-tint').value = s.tint;
   $('s-tint-text').textContent = s.tint + '%';
-  $('s-switches').innerHTML = SWITCHES.map((x) => switchHtml('sw', x.k, x.name, x.k === 'lock' ? S.locked : !!s[x.k])).join('');
+  $('s-switches').innerHTML = SWITCHES.map((x) => switchHtml('sw', x.k, x.name, x.k === 'lock' ? S.locked : !!s[x.k], { tip: x.tip })).join('');
+  applyFold();
   const sync = s.sync;
   $('s-connect').hidden = sync.on;
   $('s-account').hidden = !sync.on;
   if (sync.on) {
     $('s-account-name').textContent = sync.user;
-    $('s-cals').innerHTML = sync.cals.map((c) => switchHtml('cal-sw', c.href, c.name, c.on, '<span class="swatch"' + color(c.color) + '></span>')).join('');
+    $('s-cals').innerHTML = sync.cals.map((c) => switchHtml('cal-sw', c.href, c.name, c.on, { before: '<span class="swatch"' + color(c.color) + '></span>' })).join('');
     $('s-target').innerHTML = '<option value="">本机</option>' + sync.cals.map((c) => '<option value="' + esc(c.href) + '">' + esc(c.name) + '</option>').join('');
     $('s-target').value = sync.target || '';
   } else if (!$('s-user').value) {
@@ -822,6 +844,7 @@ async function connect() {
     await call('cred_set', { user: user, pass: pass });
     $('s-pass').value = '';
     S.settings.sync = { on: true, user: user, cals: found.map((c) => Object.assign({ on: true }, c)), target: '' };
+    S.foldSync = true; // 刚连上，留着展开方便挑日历
     save();
     fillSettings();
     await syncNow(false);
@@ -934,6 +957,64 @@ function fromCapture(p) {
     addItem('todo', { title: p.title, date: p.date || today(), due: p.time || '' }, false);
   }
   render();
+}
+
+// ---------- 提示 ----------
+
+let tipTimer = null;
+let tipFor = null;
+let tipMute = null; // 刚点过的按钮：鼠标离开之前不再弹它的名字
+
+function showTip(el) {
+  const text = el.dataset.tip;
+  const tip = $('tip');
+  if (!text || !el.isConnected) return;
+  tipFor = el;
+  tip.textContent = text;
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 8) top = r.top - h - 8;
+  tip.style.left = Math.round(left) + 'px';
+  tip.style.top = Math.round(top) + 'px';
+  tip.classList.add('on');
+}
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipFor = null;
+  $('tip').classList.remove('on');
+}
+
+// “?” 一碰就出；图标按钮停半秒才出名字，免得鼠标路过时到处闪。
+function bindTips() {
+  const stage = $('stage');
+  stage.addEventListener('mouseover', (e) => {
+    const el = e.target.closest('[data-tip]');
+    if (!el || el === tipFor || el === tipMute) return;
+    clearTimeout(tipTimer);
+    if (el.classList.contains('help')) showTip(el);
+    else tipTimer = setTimeout(() => showTip(el), 550);
+  });
+  stage.addEventListener('mouseout', (e) => {
+    const el = e.target.closest('[data-tip]');
+    if (el && !el.contains(e.relatedTarget)) {
+      hideTip();
+      if (tipMute === el) tipMute = null;
+    }
+  });
+  stage.addEventListener('focusin', (e) => { if (e.target.matches('.help:focus-visible')) showTip(e.target); });
+  stage.addEventListener('focusout', (e) => { if (e.target.matches('.help')) hideTip(); });
+  stage.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-tip]');
+    if (el && el.classList.contains('help')) { showTip(el); return; }
+    hideTip();
+    tipMute = el;
+  });
+  document.addEventListener('scroll', hideTip, true);
 }
 
 // ---------- 事件 ----------
@@ -1050,24 +1131,26 @@ function onAct(act, t) {
       const k = t.dataset.k;
       if (k === 'lock') { call('set_locked', { locked: !S.locked }).catch(() => {}); return; }
       S.settings[k] = !S.settings[k];
+      t.setAttribute('aria-checked', S.settings[k] ? 'true' : 'false');
       if (k === 'autostart') call('set_autostart', { on: S.settings.autostart }).catch(() => {});
       if (k === 'carry') rollOver();
       applySettings();
       save();
-      fillSettings();
       break;
     }
     case 'cal-sw': {
       const cal = S.settings.sync.cals.find((c) => c.href === t.dataset.k);
       if (!cal) return;
       cal.on = !cal.on;
+      t.setAttribute('aria-checked', cal.on ? 'true' : 'false');
       save();
-      fillSettings();
+      applyFold();
       rebuildRemote();
       render();
       if (cal.on) syncNow(false);
       return;
     }
+    case 'fold-sync': S.foldSync = !applyFold(); applyFold(); sendRectsSoon(); return;
     case 'sync-now': syncNow(true); return;
     case 'disconnect': disconnect(); return;
     default: return;
@@ -1076,6 +1159,7 @@ function onAct(act, t) {
 }
 
 function bind() {
+  bindTips();
   $('stage').addEventListener('click', (e) => {
     const t = e.target.closest('[data-act]');
     if (t) onAct(t.dataset.act, t);
@@ -1144,7 +1228,8 @@ function bind() {
     TAURI.event.listen('locked', (e) => {
       S.locked = !!e.payload;
       renderHeader();
-      if (S.panel === 'settings') fillSettings();
+      const sw = document.querySelector('.sw[data-k="lock"]');
+      if (sw) sw.setAttribute('aria-checked', S.locked ? 'true' : 'false');
     });
     TAURI.event.listen('capture', (e) => {
       try { fromCapture(typeof e.payload === 'string' ? JSON.parse(e.payload) : e.payload); } catch (err) { console.error(err); }

@@ -4,10 +4,15 @@
 // 本地数据读写、读取系统壁纸，以及替界面向 iCloud 发 CalDAV 请求。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod desk;
+
 use std::{
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -32,6 +37,8 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 struct Hit {
     rects: Vec<[f64; 4]>,
     locked: bool,
+    /// 用户选了“始终置顶”：这时不需要管“显示桌面”。
+    top: bool,
 }
 
 type Shared = Arc<Mutex<Hit>>;
@@ -109,8 +116,11 @@ fn toggle_lock(app: &AppHandle, shared: &Shared) {
 
 /// 贴在桌面（所有窗口之下）还是始终置顶。
 #[tauri::command]
-fn set_layer(app: AppHandle, top: bool) -> Result<(), String> {
+fn set_layer(app: AppHandle, state: State<'_, Shared>, top: bool) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("找不到主窗口")?;
+    if let Ok(mut hit) = state.lock() {
+        hit.top = top;
+    }
     window.set_always_on_bottom(!top).map_err(|e| e.to_string())?;
     window.set_always_on_top(top).map_err(|e| e.to_string())
 }
@@ -144,6 +154,17 @@ fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
         .body(body)
         .show()
         .map_err(|e| e.to_string())
+}
+
+/// 主窗口的系统句柄，给“显示桌面”的处理用。
+#[cfg(windows)]
+fn main_hwnd(window: &tauri::WebviewWindow) -> Option<isize> {
+    window.hwnd().ok().map(|h| h.0 as isize)
+}
+
+#[cfg(not(windows))]
+fn main_hwnd(_window: &tauri::WebviewWindow) -> Option<isize> {
+    None
 }
 
 // ---------- 快速记录窗口 ----------
@@ -318,15 +339,46 @@ fn main() {
 
             // 窗口比玻璃区域大，透明的地方要让鼠标落到桌面上：
             // 每 40 毫秒看一次光标在不在界面上报的区域里，据此开关“忽略鼠标”。
+            // 同一个循环里顺便盯着“显示桌面”（Win + D）：被桌面盖住了就把小组件提上来。
             let win = window.clone();
+            let handle = app.handle().clone();
+            let desk = main_hwnd(&window).and_then(desk::Desk::new).map(Arc::new);
+            let pending = Arc::new(AtomicBool::new(false));
             thread::spawn(move || {
                 let mut ignoring: Option<bool> = None;
+                let mut raised = false;
                 loop {
                     thread::sleep(Duration::from_millis(40));
-                    let (rects, locked) = match for_thread.lock() {
-                        Ok(hit) => (hit.rects.clone(), hit.locked),
+                    let (rects, locked, top) = match for_thread.lock() {
+                        Ok(hit) => (hit.rects.clone(), hit.locked, hit.top),
                         Err(_) => continue,
                     };
+                    if let Some(desk) = &desk {
+                        let shown = !top && desk.shown();
+                        if shown {
+                            if !pending.swap(true, Ordering::SeqCst) {
+                                let first = !raised;
+                                let (d, w, p) = (desk.clone(), win.clone(), pending.clone());
+                                let sent = handle.run_on_main_thread(move || {
+                                    if first {
+                                        // 显示桌面期间先松开“永远置底”，否则一点小组件它又沉下去
+                                        let _ = w.set_always_on_bottom(false);
+                                    }
+                                    d.raise();
+                                    p.store(false, Ordering::SeqCst);
+                                });
+                                if sent.is_err() {
+                                    pending.store(false, Ordering::SeqCst);
+                                }
+                            }
+                            raised = true;
+                        } else if raised {
+                            raised = false;
+                            if !top {
+                                let _ = win.set_always_on_bottom(true);
+                            }
+                        }
+                    }
                     let mut inside = false;
                     if !locked {
                         if let (Ok(cursor), Ok(origin)) = (win.cursor_position(), win.outer_position()) {

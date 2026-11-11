@@ -28,6 +28,12 @@
   .seg button[aria-pressed="true"] { background: #fff; color: #1a1730; font-weight: 700; }
   .save { height: 44px; padding: 0 24px; border-radius: 22px; background: #ffb454; color: #1b1408; font-weight: 700; transition: transform 0.25s var(--curve); }
   button:active { transform: scale(0.95); }
+  .helpwrap { position: relative; flex-shrink: 0; display: flex; }
+  .help { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid rgb(255 255 255 / 0.6); font-size: 13px; font-weight: 700; line-height: 1; color: rgb(255 255 255 / 0.86); cursor: help; }
+  .help:hover { border-color: #fff; background: rgb(255 255 255 / 0.16); color: #fff; }
+  .help:active { transform: none; }
+  .tip { position: absolute; z-index: 2; top: 32px; right: -4px; width: 288px; padding: 10px 12px; border-radius: 14px; border: 1px solid rgb(255 255 255 / 0.32); background: rgb(22 18 36 / 0.98); box-shadow: 0 12px 32px rgb(10 6 24 / 0.45); font-size: 12px; line-height: 1.6; white-space: pre-line; pointer-events: none; opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity 0.18s ease, transform 0.25s var(--curve), visibility 0s linear 0.25s; }
+  .helpwrap:hover .tip { opacity: 1; visibility: visible; transform: none; transition: opacity 0.18s ease, transform 0.25s var(--curve), visibility 0s; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -36,6 +42,11 @@
   <div class="row">
     <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#ffb454" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18l1-4L15.5 3.5a1.8 1.8 0 0 1 2.5 0l.5.5a1.8 1.8 0 0 1 0 2.5L8 17z"/><path d="M13.5 5.5l3 3"/></svg>
     <input id="text" type="text" placeholder="记一笔" aria-label="快速记录" autocomplete="off">
+    <span class="helpwrap">
+      <button type="button" class="help" tabindex="-1" aria-label="说明" aria-describedby="tip">?</button>
+      <span id="tip" class="tip" role="tooltip">写一句话，会自动识别日期和时间，比如“明天下午3点 交报告”。
+Tab 切换类型 · Enter 保存 · Esc 关闭</span>
+    </span>
   </div>
   <div class="preview" aria-live="polite">
     <div id="when" class="when"></div>
