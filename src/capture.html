@@ -5,34 +5,36 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>今笺 · 快速记录</title>
 <style>
-  :root { --curve: cubic-bezier(0.32, 0.72, 0, 1); color-scheme: dark; }
+  :root { --fg: 255 255 255; --bg: 22 18 36; --accent: #ffb454; --on-accent: #1b1408; --note: #ffe296; --solid: #fff; --on-solid: #1a1730; --edge: rgb(255 255 255 / 0.32); --hi: rgb(255 255 255 / 0.5); --curve: cubic-bezier(0.32, 0.72, 0, 1); color-scheme: dark; }
+  [data-theme="light"] { --fg: 26 23 48; --bg: 255 255 255; --accent: #7a4200; --on-accent: #fff; --note: #6b4e00; --solid: #1a1730; --on-solid: #fff; --edge: rgb(255 255 255 / 0.85); --hi: rgb(255 255 255 / 0.9); color-scheme: light; }
+  [data-theme="light"] .save { background: #c96f00; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; -webkit-user-select: none; }
-  body { display: flex; align-items: center; justify-content: center; font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif; font-size: 14px; color: #fff; }
+  body { display: flex; align-items: center; justify-content: center; font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif; font-size: 14px; color: rgb(var(--fg)); }
   button, input { font: inherit; color: inherit; }
   button { cursor: pointer; border: 0; padding: 0; background: none; }
-  button:focus-visible, input:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .box { width: 600px; display: flex; flex-direction: column; gap: 14px; padding: 20px; border-radius: 34px; border: 1px solid rgb(255 255 255 / 0.32); background: linear-gradient(155deg, rgb(255 255 255 / 0.16) 0%, rgb(255 255 255 / 0.03) 36%, rgb(255 255 255 / 0.08) 100%), rgb(22 18 36 / 0.94); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 18px 40px rgb(10 6 24 / 0.5); }
+  button:focus-visible, input:focus-visible { outline: 2px solid rgb(var(--fg)); outline-offset: 2px; }
+  .box { width: 600px; display: flex; flex-direction: column; gap: 14px; padding: 20px; border-radius: 34px; border: 1px solid var(--edge); background: linear-gradient(155deg, rgb(255 255 255 / 0.16) 0%, rgb(255 255 255 / 0.03) 36%, rgb(255 255 255 / 0.08) 100%), rgb(var(--bg) / 0.95); box-shadow: inset 0 1px 0 var(--hi), 0 18px 40px rgb(10 6 24 / 0.45); }
   .box.show { animation: rise 0.4s var(--curve) both; }
   @keyframes rise { from { opacity: 0; transform: translateY(-14px) scale(0.96); } to { opacity: 1; transform: none; } }
   .row { display: flex; align-items: center; gap: 12px; }
   .grow { flex: 1 1 0; min-width: 0; }
   #text { flex: 1 1 0; min-width: 0; height: 44px; border: 0; outline: 0; background: transparent; font-size: 20px; font-weight: 600; user-select: text; -webkit-user-select: text; }
-  #text::placeholder { color: rgb(255 255 255 / 0.7); }
-  .preview { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-height: 76px; padding: 14px 18px; border-radius: 22px; border: 1px solid rgb(255 255 255 / 0.18); background: rgb(255 255 255 / 0.1); }
-  .when { font-size: 13px; font-weight: 700; color: #ffb454; font-variant-numeric: tabular-nums; }
+  #text::placeholder { color: rgb(var(--fg) / 0.7); }
+  .preview { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-height: 76px; padding: 14px 18px; border-radius: 22px; border: 1px solid rgb(var(--fg) / 0.18); background: rgb(var(--fg) / 0.08); }
+  .when { font-size: 13px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
   .what { font-size: 17px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tag { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: #ffe296; }
-  .seg { display: flex; gap: 4px; padding: 4px; border-radius: 24px; background: rgb(255 255 255 / 0.1); }
+  .tag { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--note); }
+  .seg { display: flex; gap: 4px; padding: 4px; border-radius: 24px; background: rgb(var(--fg) / 0.1); }
   .seg button { height: 40px; padding: 0 20px; border-radius: 20px; transition: background-color 0.25s ease, color 0.25s ease, transform 0.25s var(--curve); }
-  .seg button[aria-pressed="true"] { background: #fff; color: #1a1730; font-weight: 700; }
-  .save { height: 44px; padding: 0 24px; border-radius: 22px; background: #ffb454; color: #1b1408; font-weight: 700; transition: transform 0.25s var(--curve); }
+  .seg button[aria-pressed="true"] { background: var(--solid); color: var(--on-solid); font-weight: 700; }
+  .save { height: 44px; padding: 0 24px; border-radius: 22px; background: #ffb454; color: var(--on-accent); font-weight: 700; transition: transform 0.25s var(--curve); }
   button:active { transform: scale(0.95); }
   .helpwrap { position: relative; flex-shrink: 0; display: flex; }
-  .help { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid rgb(255 255 255 / 0.6); font-size: 13px; font-weight: 700; line-height: 1; color: rgb(255 255 255 / 0.86); cursor: help; }
-  .help:hover { border-color: #fff; background: rgb(255 255 255 / 0.16); color: #fff; }
+  .help { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid rgb(var(--fg) / 0.6); font-size: 13px; font-weight: 700; line-height: 1; color: rgb(var(--fg) / 0.86); cursor: help; }
+  .help:hover { border-color: rgb(var(--fg)); background: rgb(var(--fg) / 0.16); color: rgb(var(--fg)); }
   .help:active { transform: none; }
-  .tip { position: absolute; z-index: 2; top: 32px; right: -4px; width: 288px; padding: 10px 12px; border-radius: 14px; border: 1px solid rgb(255 255 255 / 0.32); background: rgb(22 18 36 / 0.98); box-shadow: 0 12px 32px rgb(10 6 24 / 0.45); font-size: 12px; line-height: 1.6; white-space: pre-line; pointer-events: none; opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity 0.18s ease, transform 0.25s var(--curve), visibility 0s linear 0.25s; }
+  .tip { position: absolute; z-index: 2; top: 32px; right: -4px; width: 288px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--edge); background: rgb(var(--bg) / 0.98); box-shadow: 0 12px 32px rgb(10 6 24 / 0.45); font-size: 12px; line-height: 1.6; white-space: pre-line; pointer-events: none; opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity 0.18s ease, transform 0.25s var(--curve), visibility 0s linear 0.25s; }
   .helpwrap:hover .tip { opacity: 1; visibility: visible; transform: none; transition: opacity 0.18s ease, transform 0.25s var(--curve), visibility 0s; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
@@ -44,8 +46,9 @@
     <input id="text" type="text" placeholder="记一笔" aria-label="快速记录" autocomplete="off">
     <span class="helpwrap">
       <button type="button" class="help" tabindex="-1" aria-label="说明" aria-describedby="tip">?</button>
-      <span id="tip" class="tip" role="tooltip">写一句话，会自动识别日期和时间，比如“明天下午3点 交报告”。
-Tab 切换类型 · Enter 保存 · Esc 关闭</span>
+      <span id="tip" class="tip" role="tooltip">写一句话，会自动识别日期和时间，比如“明天下午2点到4点 开会”“30分钟后 喝水”。
+有具体时间的存成日程，其余存成待办；Tab 可以手动换类型。
+Enter 保存 · Esc 放弃 · 切走窗口草稿会留着</span>
     </span>
   </div>
   <div class="preview" aria-live="polite">

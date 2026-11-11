@@ -92,9 +92,14 @@
       if (eq > 0) map[kv.slice(0, eq).toUpperCase()] = kv.slice(eq + 1);
     });
     if (!map.FREQ) return null;
-    const rule = { freq: map.FREQ.toUpperCase(), interval: Math.max(1, Number(map.INTERVAL || 1)), byday: [], count: map.COUNT ? Number(map.COUNT) : 0, until: null, bymonthday: 0 };
+    const rule = { freq: map.FREQ.toUpperCase(), interval: Math.max(1, Number(map.INTERVAL || 1)), byday: [], bydayOrd: [], count: map.COUNT ? Number(map.COUNT) : 0, until: null, bymonthday: 0 };
     if (map.BYDAY) {
-      rule.byday = map.BYDAY.split(',').map((x) => CODES[x.replace(/^[+-]?\d+/, '').toUpperCase()]).filter((x) => x !== undefined);
+      map.BYDAY.split(',').forEach((x) => {
+        const m = /^([+-]?\d+)?([A-Z]{2})$/.exec(x.trim().toUpperCase());
+        if (!m || CODES[m[2]] === undefined) return;
+        rule.byday.push(CODES[m[2]]);
+        rule.bydayOrd.push({ ord: m[1] ? Number(m[1]) : 0, w: CODES[m[2]] });
+      });
     }
     if (map.BYMONTHDAY) rule.bymonthday = Number(map.BYMONTHDAY.split(',')[0]) || 0;
     if (map.UNTIL) rule.until = parseDT({ value: map.UNTIL, params: {} });
@@ -121,7 +126,7 @@
       if (inAlarm) {
         if (p.name === 'TRIGGER' && ev.alarm === null) {
           const d = parseDuration(p.value);
-          if (d !== null && d <= 0) ev.alarm = -d;
+          if (d !== null && d <= 0) ev.alarm = d === 0 ? 0 : -d;
         }
         return;
       }
@@ -177,6 +182,29 @@
           if (emit(ms) === false) return;
         }
       }
+    } else if (r.freq === 'MONTHLY' && r.bydayOrd.length) {
+      // 每月按“第几个周几”：2TU 是第二个周二，-1FR 是最后一个周五，不带数字就是每个
+      for (let i = 0; i < 1200; i += 1) {
+        const idx = (w0.y * 12 + (w0.m - 1)) + i * r.interval;
+        const y = Math.floor(idx / 12);
+        const mo = idx % 12;
+        const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+        const firstDow = new Date(Date.UTC(y, mo, 1)).getUTCDay();
+        const picked = new Set();
+        r.bydayOrd.forEach((b) => {
+          const all = [];
+          for (let d = 1 + ((b.w - firstDow + 7) % 7); d <= last; d += 7) all.push(d);
+          if (b.ord > 0 && all[b.ord - 1]) picked.add(all[b.ord - 1]);
+          else if (b.ord < 0 && all[all.length + b.ord]) picked.add(all[all.length + b.ord]);
+          else if (b.ord === 0) all.forEach((d) => picked.add(d));
+        });
+        const days = Array.from(picked).sort((a, b) => a - b);
+        for (let k = 0; k < days.length; k += 1) {
+          const ms = Date.UTC(y, mo, days[k]);
+          if (ms < base) continue;
+          if (emit(ms) === false) return;
+        }
+      }
     } else if (r.freq === 'MONTHLY' || r.freq === 'YEARLY') {
       const step = r.freq === 'YEARLY' ? 12 * r.interval : r.interval;
       const day = r.bymonthday > 0 ? r.bymonthday : w0.d;
@@ -201,6 +229,7 @@
     const allDay = startDt.allDay;
     const end = new Date(start.getTime() + dur * 60000);
     return {
+      dur: dur,
       uid: src.uid,
       title: src.title,
       place: src.place,
@@ -215,11 +244,35 @@
     };
   }
 
+  // 跨过午夜的日程按天拆开，每天一段：第一天从开始到 23:59，中间几天算全天，最后一天从 0 点到结束。
+  function pieces(one, dur) {
+    const start = new Date(one.ms);
+    const end = new Date(one.ms + Math.max(dur, 1) * 60000 - 1);
+    const d0 = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const d1 = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    const n = Math.round((d1 - d0) / DAY) + 1;
+    if (n <= 1) return [one];
+    const out = [];
+    for (let i = 0; i < n && i < 366; i += 1) {
+      const day = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + i);
+      const p = Object.assign({}, one, { date: localKey(day), part: i + 1, parts: n, key: one.key + '-' + (i + 1), ms: i ? day.getTime() : one.ms });
+      if (!one.allDay) {
+        const first = i === 0;
+        const lastPiece = i === n - 1;
+        if (!first && !lastPiece) Object.assign(p, { allDay: true, start: '', end: '' });
+        else Object.assign(p, { start: first ? one.start : '00:00', end: lastPiece ? localTime(new Date(one.ms + dur * 60000)) : '23:59' });
+      }
+      out.push(p);
+    }
+    return out;
+  }
+
   // 把一个日历条目（可能带重复规则和单次改动）展开成 [from, to] 之间的具体场次。
   function expand(events, from, to) {
-    const out = [];
+    const all = [];
     const fromMs = from.getTime();
     const toMs = to.getTime();
+    const out = { push: (one) => pieces(one, one.dur).forEach((p) => { if (p.ms <= toMs && p.ms + DAY > fromMs) all.push(p); }) };
     const overrides = events.filter((e) => e.rid);
     events.filter((e) => !e.rid).forEach((m) => {
       if (m.status === 'CANCELLED') return;
@@ -253,7 +306,7 @@
         return true;
       });
     });
-    return out;
+    return all;
   }
 
   // ---------- 生成与修改 ----------
@@ -307,14 +360,23 @@
     return lines;
   }
 
+  // 提醒：'none' 或空就不写；0 是到点提醒
+  function alarmLines(remind) {
+    if (remind === undefined || remind === null || remind === '' || remind === 'none') return [];
+    const mins = Number(remind);
+    if (isNaN(mins) || mins < 0) return [];
+    return ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Reminder', 'TRIGGER:' + (mins === 0 ? 'PT0S' : '-PT' + mins + 'M'), 'END:VALARM'];
+  }
+
   function build(uid, f) {
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Jinjian//CN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', 'UID:' + uid]
-      .concat(bodyLines(f))
+      .concat(bodyLines(f), alarmLines(f.remind))
       .concat(['END:VEVENT', 'END:VCALENDAR']);
     return lines.map(fold).join('\r\n') + '\r\n';
   }
 
   // 只改第一个主事件里的标题、时间、地点、备注，其余原样保留。
+  // f.remind 不传就不碰原来的提醒（Apple 日历常有两条提醒，不能随手合成一条）；传了就整体替换。
   function patch(text, f) {
     const lines = unfold(text).split('\n').filter((l) => l.length > 0);
     const begin = lines.findIndex((l) => l.trim().toUpperCase() === 'BEGIN:VEVENT');
@@ -325,11 +387,18 @@
     }
     if (end < 0) return text;
     const drop = /^(SUMMARY|LOCATION|DESCRIPTION|DTSTART|DTEND|DURATION|DTSTAMP|LAST-MODIFIED|SEQUENCE)([;:]|$)/i;
+    const swapAlarm = f.remind !== undefined;
     let seq = 0;
     let nested = 0;
+    let inAlarm = false;
     const kept = [];
     for (let i = begin + 1; i < end; i += 1) {
       const up = lines[i].trim().toUpperCase();
+      if (swapAlarm && up === 'BEGIN:VALARM') inAlarm = true;
+      if (inAlarm) {
+        if (up === 'END:VALARM') inAlarm = false;
+        continue;
+      }
       if (up.indexOf('BEGIN:') === 0) nested += 1;
       if (nested === 0 && drop.test(lines[i])) {
         const m = /^SEQUENCE:(\d+)/i.exec(lines[i]);
@@ -340,7 +409,7 @@
       if (up.indexOf('END:') === 0) nested -= 1;
     }
     const fresh = bodyLines(f).concat(['SEQUENCE:' + (seq + 1), 'LAST-MODIFIED:' + fmtUTC(new Date())]);
-    const all = lines.slice(0, begin + 1).concat(fresh, kept, lines.slice(end));
+    const all = lines.slice(0, begin + 1).concat(fresh, kept, swapAlarm ? alarmLines(f.remind) : [], lines.slice(end));
     return all.map(fold).join('\r\n') + '\r\n';
   }
 

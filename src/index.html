@@ -16,12 +16,10 @@
       <div class="glass"></div>
       <section id="panel-body" class="scroll" aria-label="详情">
         <div class="row gap6">
-          <span id="p-kind" class="chip">日程</span>
+          <button id="p-kind" type="button" class="chip tap" data-act="p-kind" data-tip="点一下在日程和待办之间切换">日程</button>
           <span id="p-cal" class="meta grow"></span>
-          <button id="p-del" type="button" class="icon tap" data-act="p-del" aria-label="删除">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M5.5 6l.8 10a1 1 0 0 0 1 1h5.4a1 1 0 0 0 1-1l.8-10"/></svg>
-          </button>
-          <button type="button" class="icon tap" data-act="p-close" aria-label="关闭">
+          <select id="p-cal-pick" class="mini-select" aria-label="存到哪个日历" hidden></select>
+          <button type="button" class="icon tap" data-act="p-close" aria-label="关闭" data-tip="关闭（Esc）">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg>
           </button>
         </div>
@@ -36,7 +34,10 @@
 
         <div class="frow">
           <label for="p-date">日期</label>
-          <input id="p-date" class="field" type="date">
+          <div class="row gap8">
+            <input id="p-date" class="field" type="date">
+            <button id="p-allday" type="button" class="pill small tap" data-act="p-allday" aria-pressed="false">全天</button>
+          </div>
         </div>
         <div id="p-time-row" class="frow">
           <label for="p-start">时间</label>
@@ -84,6 +85,8 @@
           <label for="p-notes" class="note-label">备注</label>
           <textarea id="p-notes" class="notes" rows="3"></textarea>
         </div>
+
+        <button id="p-del" type="button" class="del tap" data-act="p-del">删除</button>
       </section>
     </div>
   </div>
@@ -171,11 +174,14 @@
     <!-- 小组件 -->
     <main id="widget" class="layer from-scale on">
       <header class="row gap10">
-        <div id="h-day" class="day">–</div>
-        <div class="grow col gap2">
-          <div id="h-month" class="month"></div>
-          <div id="h-week" class="week"></div>
-        </div>
+        <button type="button" class="date-btn tap" data-act="view" aria-label="日历" data-tip="点日期打开日历">
+          <span id="h-day" class="day">–</span>
+          <span class="col gap2">
+            <span id="h-month" class="month"></span>
+            <span id="h-week" class="week"></span>
+          </span>
+        </button>
+        <span class="grow"></span>
         <div class="row">
           <button id="b-view" type="button" class="icon tap" data-act="view" aria-pressed="false" aria-label="日历" data-tip="日历">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="3"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg>
@@ -193,7 +199,7 @@
       </header>
 
       <div class="views">
-        <div id="day" class="layer from-up on">
+        <div id="day" class="layer from-up on scroll">
           <div id="pips-row" class="row gap10">
             <div id="pips" class="pips" aria-hidden="true"></div>
             <span id="count" class="count"></span>
@@ -218,7 +224,7 @@
             <span>今天</span>
           </button>
 
-          <section class="sec">
+          <section class="sec ev-sec">
             <div class="sec-head">
               <h2 class="grow">日程</h2>
               <button type="button" class="icon small tap" data-act="add-event" aria-label="新建日程">
@@ -267,7 +273,7 @@
 
       <form id="quick" class="quick">
         <input id="quick-input" type="text" placeholder="记一笔" aria-label="快速记录" autocomplete="off">
-        <button type="button" class="help" data-tip="回车存成待办。&#10;可以带上时间，比如“明天下午3点 交报告”，会自动识别。&#10;在任何地方按 Alt + Q 也能快速记录。" aria-label="说明">?</button>
+        <button type="button" class="help" data-tip="回车保存。带具体时间的存成日程，比如“明天下午2点到4点 开会”；其余存成待办。&#10;没写日期就存到当前看的那天。&#10;在任何地方按 Alt + Q 也能快速记录。" aria-label="说明">?</button>
         <button type="submit" class="quick-btn tap" aria-label="添加">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
         </button>
@@ -278,7 +284,7 @@
     <section id="big" class="layer from-scale" aria-label="月视图">
       <div class="row gap6 big-head">
         <h2 id="big-title" class="big-title"></h2>
-        <button type="button" class="help" data-tip="点日期数字：弹出这天的日程和待办。&#10;点某条日程：在旁边直接修改。&#10;左上角带圆圈的数字：这天没做完的待办。" aria-label="说明">?</button>
+        <button type="button" class="help" data-tip="点格子或日期数字：弹出这天的日程和待办。&#10;点某条日程：在旁边直接修改。&#10;左上角带圆圈的数字：这天没做完的待办。" aria-label="说明">?</button>
         <span class="grow"></span>
         <button type="button" class="pill accent tap" data-act="add-event">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
@@ -301,9 +307,8 @@
         <div id="pop" class="layer from-scale" aria-hidden="true">
           <div class="row gap2 pop-head">
             <h3 id="pop-title" class="grow"></h3>
-            <button type="button" class="icon mini tap" data-act="pop-add" aria-label="在这天新建日程">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-            </button>
+            <button type="button" class="pill mini tap" data-act="pop-add">+ 日程</button>
+            <button type="button" class="pill mini tap" data-act="pop-add-todo">+ 待办</button>
             <button type="button" class="icon mini tap" data-act="pop-close" aria-label="关闭">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>
             </button>
@@ -348,6 +353,10 @@
   </button>
 </div>
 
+<div id="toast" class="toast layer from-up" role="status" aria-live="polite">
+  <span id="toast-text" class="ellipsis"></span>
+  <button id="toast-btn" type="button" class="toast-btn tap" data-act="toast"></button>
+</div>
 <div id="tip" class="tip" role="tooltip" hidden></div>
 
 <script src="ics.js"></script>

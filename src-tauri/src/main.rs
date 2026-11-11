@@ -11,7 +11,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::Duration,
@@ -51,17 +51,28 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// 读取数据文件；每次启动读取时顺手留一份上一次的备份。
+fn is_json(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text).is_ok()
+}
+
+/// 读取数据文件。文件完好才拿它覆盖备份；文件坏了就改用备份，坏文件另存一份留着查。
 #[tauri::command]
 fn load_data(app: AppHandle) -> Result<String, String> {
     let dir = data_dir(&app)?;
     let file = dir.join("data.json");
-    if !file.exists() {
-        return Ok(String::new());
+    let backup = dir.join("data.bak.json");
+    let text = fs::read_to_string(&file).unwrap_or_default();
+    if is_json(&text) {
+        let _ = fs::write(&backup, &text);
+        return Ok(text);
     }
-    let text = fs::read_to_string(&file).map_err(|e| e.to_string())?;
-    let _ = fs::write(dir.join("data.bak.json"), &text);
-    Ok(text)
+    if !text.is_empty() {
+        let _ = fs::write(dir.join("data.broken.json"), &text);
+    }
+    match fs::read_to_string(&backup) {
+        Ok(saved) if is_json(&saved) => Ok(saved),
+        _ => Ok(String::new()),
+    }
 }
 
 /// 先写临时文件再替换，避免写到一半断电把数据写坏。
@@ -121,8 +132,9 @@ fn set_layer(app: AppHandle, state: State<'_, Shared>, top: bool) -> Result<(), 
     if let Ok(mut hit) = state.lock() {
         hit.top = top;
     }
-    window.set_always_on_bottom(!top).map_err(|e| e.to_string())?;
-    window.set_always_on_top(top).map_err(|e| e.to_string())
+    // 顺序有讲究：取消置顶会把窗口放到普通窗口最上面，所以要先改置顶、再改置底
+    window.set_always_on_top(top).map_err(|e| e.to_string())?;
+    window.set_always_on_bottom(!top).map_err(|e| e.to_string())
 }
 
 /// 开机自启：在当前用户的“启动项”注册表里加 / 删一条。
@@ -226,6 +238,21 @@ struct DavRes {
     body: String,
 }
 
+/// 整个程序共用一个网络客户端，连接可以复用。
+fn http() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .user_agent("Jinjian")
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(CLIENT.get_or_init(|| client))
+}
+
 /// 替界面发一个 CalDAV 请求。只允许发往 iCloud，密码默认从凭据管理器取。
 /// 不自动跟随跳转（跳转时方法会被改成 GET），交给界面自己重发。
 #[tauri::command]
@@ -246,13 +273,7 @@ async fn dav(req: DavReq) -> Result<DavRes, String> {
             .map_err(|_| "auth".to_string())?,
     };
     let method = reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| e.to_string())?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(30))
-        .user_agent("Jinjian")
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut builder = client.request(method, url).basic_auth(&req.user, Some(pass));
+    let mut builder = http()?.request(method, url).basic_auth(&req.user, Some(pass));
     for (name, value) in &req.headers {
         builder = builder.header(name.as_str(), value.as_str());
     }
