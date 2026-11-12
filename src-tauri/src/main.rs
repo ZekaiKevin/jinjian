@@ -11,17 +11,17 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
+        mpsc, Arc, Mutex, OnceLock,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
@@ -31,13 +31,15 @@ const WINDOW_WIDTH: f64 = 820.0;
 /// App 专用密码存在 Windows 凭据管理器里，用这个名字归类。
 const CRED_SERVICE: &str = "Jinjian iCloud";
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+/// 用户从托盘点了“退出”。主窗口意外没了要自动重开，正常退出不算。
+static QUITTING: AtomicBool = AtomicBool::new(false);
 
 /// 界面上报的可点击区域（相对窗口左上角的物理像素），以及是否处于“鼠标穿透”。
 #[derive(Default)]
 struct Hit {
     rects: Vec<[f64; 4]>,
     locked: bool,
-    /// 用户选了“始终置顶”：这时不需要管“显示桌面”。
+    /// 用户选了“始终置顶”：这时不挂在桌面上，也不需要管“显示桌面”。
     top: bool,
 }
 
@@ -132,9 +134,15 @@ fn set_layer(app: AppHandle, state: State<'_, Shared>, top: bool) -> Result<(), 
     if let Ok(mut hit) = state.lock() {
         hit.top = top;
     }
-    // 顺序有讲究：取消置顶会把窗口放到普通窗口最上面，所以要先改置顶、再改置底
-    window.set_always_on_top(top).map_err(|e| e.to_string())?;
-    window.set_always_on_bottom(!top).map_err(|e| e.to_string())
+    // 顺序有讲究：先撤掉旧的那个，再设新的。
+    // 反过来的话，后撤掉的那一步会把窗口放回“普通窗口”，刚设的置顶 / 置底就白设了。
+    if top {
+        window.set_always_on_bottom(false).map_err(|e| e.to_string())?;
+        window.set_always_on_top(true).map_err(|e| e.to_string())
+    } else {
+        window.set_always_on_top(false).map_err(|e| e.to_string())?;
+        window.set_always_on_bottom(true).map_err(|e| e.to_string())
+    }
 }
 
 /// 开机自启：在当前用户的“启动项”注册表里加 / 删一条。
@@ -294,6 +302,7 @@ async fn dav(req: DavReq) -> Result<DavRes, String> {
 // ---------- 启动 ----------
 
 fn main() {
+    let started = Instant::now();
     let shared: Shared = Arc::new(Mutex::new(Hit::default()));
     let for_thread = shared.clone();
     let for_tray = shared.clone();
@@ -351,7 +360,10 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             tray.on_menu_event(move |app, event| match event.id.as_ref() {
-                "quit" => app.exit(0),
+                "quit" => {
+                    QUITTING.store(true, Ordering::SeqCst);
+                    app.exit(0);
+                }
                 "capture" => show_capture(app),
                 "toggle_lock" => toggle_lock(app, &for_tray),
                 _ => {}
@@ -360,45 +372,63 @@ fn main() {
 
             // 窗口比玻璃区域大，透明的地方要让鼠标落到桌面上：
             // 每 40 毫秒看一次光标在不在界面上报的区域里，据此开关“忽略鼠标”。
-            // 同一个循环里顺便盯着“显示桌面”（Win + D）：被桌面盖住了就把小组件提上来。
+            // 同一个循环里顺便照看“显示桌面”（Win + D），细节见 desk.rs。
+            // 桌面附近的窗口顺序一变，desk 会通过这条通道立刻叫醒循环，不用等到下一个 40 毫秒。
             let win = window.clone();
-            let handle = app.handle().clone();
-            let desk = main_hwnd(&window).and_then(desk::Desk::new).map(Arc::new);
-            let pending = Arc::new(AtomicBool::new(false));
+            let (wake_tx, wake_rx) = mpsc::channel::<()>();
+            let wake_tx = Mutex::new(wake_tx);
+            let desk = main_hwnd(&window).and_then(|hwnd| {
+                desk::Desk::new(
+                    hwnd,
+                    Box::new(move || {
+                        if let Ok(tx) = wake_tx.lock() {
+                            let _ = tx.send(());
+                        }
+                    }),
+                )
+            });
             thread::spawn(move || {
+                let tick = Duration::from_millis(40);
                 let mut ignoring: Option<bool> = None;
                 let mut raised = false;
+                let mut rounds = 0u32;
                 loop {
-                    thread::sleep(Duration::from_millis(40));
+                    // 没有 desk（或它没用上通道）时通道是断开的，老老实实睡 40 毫秒
+                    if let Err(mpsc::RecvTimeoutError::Disconnected) = wake_rx.recv_timeout(tick) {
+                        thread::sleep(tick);
+                    }
+                    while wake_rx.try_recv().is_ok() {}
                     let (rects, locked, top) = match for_thread.lock() {
                         Ok(hit) => (hit.rects.clone(), hit.locked, hit.top),
                         Err(_) => continue,
                     };
                     if let Some(desk) = &desk {
-                        let shown = !top && desk.shown();
-                        if shown {
-                            if !pending.swap(true, Ordering::SeqCst) {
-                                let first = !raised;
-                                let (d, w, p) = (desk.clone(), win.clone(), pending.clone());
-                                let sent = handle.run_on_main_thread(move || {
-                                    if first {
-                                        // 显示桌面期间先松开“永远置底”，否则一点小组件它又沉下去
-                                        let _ = w.set_always_on_bottom(false);
-                                    }
-                                    d.raise();
-                                    p.store(false, Ordering::SeqCst);
-                                });
-                                if sent.is_err() {
-                                    pending.store(false, Ordering::SeqCst);
-                                }
-                            }
-                            raised = true;
-                        } else if raised {
+                        if top {
+                            desk.detach();
                             raised = false;
-                            if !top {
+                        } else if desk.attach() {
+                            // 挂在桌面窗口名下了：系统自己会让小组件跟着桌面走
+                            if raised {
+                                raised = false;
                                 let _ = win.set_always_on_bottom(true);
                             }
+                        } else if desk.shown() {
+                            if !raised {
+                                raised = true;
+                                // 显示桌面期间先松开“永远置底”，否则一点小组件它又沉下去
+                                let _ = win.set_always_on_bottom(false);
+                            }
+                            desk.raise();
+                        } else if raised {
+                            raised = false;
+                            desk.lower();
+                            let _ = win.set_always_on_bottom(true);
                         }
+                    }
+                    // 约每秒一次：万一被别的程序最小化了（比如“全部最小化”），自己恢复
+                    rounds = rounds.wrapping_add(1);
+                    if rounds % 25 == 0 && win.is_minimized().unwrap_or(false) {
+                        let _ = win.unminimize();
                     }
                     let mut inside = false;
                     if !locked {
@@ -418,6 +448,26 @@ fn main() {
             });
 
             Ok(())
+        })
+        .on_window_event(move |window, event| match event {
+            // 小组件没有关闭按钮；Alt + F4 之类的关闭请求一律不理，退出走托盘菜单。
+            // 快速记录窗口则是收起来，下次还要用。
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                if window.label() != "main" {
+                    let _ = window.hide();
+                }
+            }
+            // 主窗口被系统销毁了（不是用户退出）：重开一个，免得只剩托盘图标。
+            // 刚启动就没了多半是别的问题，不反复重开。
+            WindowEvent::Destroyed
+                if window.label() == "main"
+                    && !QUITTING.load(Ordering::SeqCst)
+                    && started.elapsed() > Duration::from_secs(10) =>
+            {
+                window.app_handle().restart();
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             load_data,

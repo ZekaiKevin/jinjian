@@ -4,9 +4,9 @@
    颜色全部走变量，深色 / 浅色只换变量。 */
 
 :root {
+  /* 墨色（文字、图标）：默认是浅色字，配深色玻璃 */
   --fg: 255 255 255;
-  --bg: 22 18 36;
-  --tint: 0.5;
+  --shade: 10 6 24;
   --accent: #ffb454;
   --accent-rgb: 255 180 84;
   --accent-ink: #ffb454;
@@ -18,10 +18,23 @@
   --note-rgb: 255 226 150;
   --solid: #ffffff;
   --on-solid: #1a1730;
+  --pop: rgb(22 18 36 / 0.92);
+  --field: rgb(255 255 255 / 0.1);
+  --field-edge: rgb(255 255 255 / 0.24);
+  --pill-edge: rgb(255 255 255 / 0.36);
+  --cell: rgb(255 255 255 / 0.06);
+  --cell-sel: rgb(255 255 255 / 0.16);
+  --sel: rgb(255 255 255 / 0.2);
+  --danger: #ff9b9b;
+  /* 玻璃：底色、底色的浓度、玻璃整体还剩几成（0 就是完全透明）、文字描边的强度 */
+  --bg: 22 18 36;
+  --tint: 0.5;
+  --glass: 1;
+  --halo: 0;
+  --wp-filter: blur(24px) saturate(1.7);
   --edge: rgb(255 255 255 / 0.32);
   --hi: rgb(255 255 255 / 0.55);
-  --pop: rgb(22 18 36 / 0.92);
-  --shadow: rgb(10 6 24 / 0.42);
+  --shadow: rgb(10 6 24 / calc(0.42 * var(--glass)));
   --shell-h: 864px;
   --wp: none;
   --wp-size: auto;
@@ -32,24 +45,39 @@
   color-scheme: dark;
 }
 
+/* 浅色主题：换的是玻璃。 */
 [data-theme="light"] {
+  --bg: 250 249 253;
+  --wp-filter: blur(24px) saturate(1.5) brightness(1.12);
+  --edge: rgb(255 255 255 / 0.8);
+  --hi: rgb(255 255 255 / 0.9);
+  --shadow: rgb(10 6 24 / calc(0.28 * var(--glass)));
+}
+
+/* 深色字：玻璃够亮时用。由界面按“壁纸 + 玻璃”的实际明暗自动决定，
+   所以浅色主题调得很透、壁纸又很暗时，会自动换回浅色字。 */
+[data-ink="dark"] {
   --fg: 26 23 48;
-  --bg: 255 255 255;
+  --shade: 255 255 255;
   --accent: #c96f00;
-  --accent-rgb: 201 111 0;
-  --accent-ink: #7a4200;
+  --accent-rgb: 232 132 24;
+  --accent-ink: #8a4a00;
   --on-accent: #ffffff;
   --mint: #1f7a55;
   --mint-rgb: 31 122 85;
   --on-mint: #ffffff;
   --note: #6b4e00;
-  --note-rgb: 214 160 20;
+  --note-rgb: 246 196 62;
   --solid: #1a1730;
   --on-solid: #ffffff;
-  --edge: rgb(255 255 255 / 0.8);
-  --hi: rgb(255 255 255 / 0.9);
-  --pop: rgb(255 255 255 / 0.95);
-  --shadow: rgb(10 6 24 / 0.3);
+  --pop: rgb(255 255 255 / 0.96);
+  --field: rgb(255 255 255 / 0.5);
+  --field-edge: rgb(26 23 48 / 0.16);
+  --pill-edge: rgb(26 23 48 / 0.22);
+  --cell: rgb(255 255 255 / 0.34);
+  --cell-sel: rgb(255 255 255 / 0.72);
+  --sel: rgb(26 23 48 / 0.1);
+  --danger: #b4232a;
   color-scheme: light;
 }
 
@@ -68,12 +96,14 @@ body {
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
   font-size: 14px;
   color: rgb(var(--fg));
+  /* 玻璃调得很透时，给文字垫一圈反色的晕，像桌面图标的名字那样，什么壁纸上都看得清 */
+  text-shadow: 0 0 2px rgb(var(--shade) / calc(0.85 * var(--halo))), 0 0 6px rgb(var(--shade) / calc(0.6 * var(--halo))), 0 1px 12px rgb(var(--shade) / calc(0.5 * var(--halo)));
 }
 
 /* 仅在浏览器里预览时使用：给一块背景，方便看效果。 */
 .preview body { background: #3a3550 var(--wp) center / cover no-repeat; }
 
-button, input, textarea, select { font: inherit; color: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; text-shadow: inherit; }
 button { cursor: pointer; border: 0; padding: 0; background: none; }
 input, textarea { user-select: text; -webkit-user-select: text; }
 input::placeholder, textarea::placeholder { color: rgb(var(--fg) / 0.7); }
@@ -112,7 +142,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .icon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; }
 .icon.small { width: 36px; height: 36px; }
 .icon.mini { width: 32px; height: 32px; }
-.icon.ring { border: 1px solid rgb(var(--fg) / 0.3); background: rgb(var(--fg) / 0.1); }
+.icon.ring { border: 1px solid var(--pill-edge); background: var(--field); }
 .icon[aria-pressed="true"] { background: var(--solid); color: var(--on-solid); }
 .icon.confirm { background: #e5484d; color: #fff; }
 
@@ -122,14 +152,13 @@ h2, .h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; color: rgb(
   flex: 1 1 0;
   height: 40px;
   border-radius: 20px;
-  border: 1px solid rgb(var(--fg) / 0.4);
-  background: rgb(var(--fg) / 0.08);
+  border: 1px solid var(--pill-edge);
+  background: var(--field);
   font-weight: 700;
 }
-.pill.small { flex: none; height: 36px; padding: 0 14px; border-color: rgb(var(--fg) / 0.32); font-size: 13px; }
+.pill.small { flex: none; height: 36px; padding: 0 14px; font-size: 13px; }
 .pill.solid { flex: none; border: 0; background: var(--solid); color: var(--on-solid); }
 .pill.accent { flex: none; display: flex; align-items: center; gap: 6px; padding: 0 16px 0 12px; border: 0; background: var(--accent); color: var(--on-accent); }
-.pill.back { align-self: flex-start; display: flex; align-items: center; gap: 6px; padding: 0 14px 0 10px; }
 
 .field {
   flex: 1 1 0;
@@ -138,12 +167,12 @@ h2, .h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; color: rgb(
   height: 40px;
   padding: 0 12px;
   border-radius: 14px;
-  border: 1px solid rgb(var(--fg) / 0.24);
-  background: rgb(var(--fg) / 0.1);
+  border: 1px solid var(--field-edge);
+  background: var(--field);
   font-variant-numeric: tabular-nums;
 }
 .field.title { flex: none; height: 48px; padding: 0 14px; border-radius: 16px; font-size: 19px; font-weight: 700; }
-.field.round { border-radius: 20px; background: rgb(var(--fg) / 0.06); }
+.field.round { border-radius: 20px; }
 .field:disabled, .notes:disabled { opacity: 0.75; }
 
 .frow { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; column-gap: 8px; }
@@ -162,13 +191,17 @@ h2, .h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; color: rgb(
 .knob { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgb(10 6 24 / 0.3); transition: transform 0.4s var(--curve); }
 .sw[aria-checked="true"] .track { background: var(--mint); }
 .sw[aria-checked="true"] .knob { transform: translateX(20px); }
-.swatch { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--accent)); }
+.swatch { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--cm); }
+
+/* 日历自带的颜色（比如亮黄）在浅底上太淡，深色字时压暗一些再用。 */
+.ev, .line, .prow, .swatch { --cm: var(--c, var(--accent)); }
+[data-ink="dark"] .ev, [data-ink="dark"] .line, [data-ink="dark"] .prow, [data-ink="dark"] .swatch { --cm: color-mix(in srgb, var(--c, var(--accent)) 72%, #1a1730); }
 
 input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--solid); }
 
 /* ---------- 玻璃 ---------- */
 
-.glass { position: absolute; inset: 0; overflow: hidden; isolation: isolate; border-radius: inherit; }
+.glass { position: absolute; inset: 0; overflow: hidden; isolation: isolate; border-radius: inherit; opacity: var(--glass); }
 .glass::before {
   content: "";
   position: absolute;
@@ -178,7 +211,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   background-repeat: no-repeat;
   background-size: var(--wp-size);
   background-position: right calc(30px - var(--r) - var(--ox)) top calc(30px - var(--t) - var(--oy));
-  filter: blur(24px) saturate(1.7);
+  filter: var(--wp-filter);
 }
 .glass::after {
   content: "";
@@ -192,10 +225,16 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
     rgb(var(--bg) / var(--tint));
   box-shadow: inset 0 1px 0 var(--hi), inset 0 -12px 28px rgb(255 255 255 / 0.05);
 }
-/* 读不到壁纸，或关掉了背景模糊：玻璃里不画壁纸。 */
+/* 读不到壁纸，或关掉了背景模糊：玻璃里不画壁纸，底色直接盖在真实的桌面上。 */
 .no-wp .glass::before, .no-blur .glass::before { display: none; }
-/* 读不到壁纸又开着模糊时，用更实的底色保证文字看得清。 */
-.no-wp:not(.no-blur) .glass::after { background: rgb(var(--bg) / 0.86); }
+
+/* 实心的小块（选中的按钮、弹出的小窗）自己有底色，不需要文字描边。 */
+.pill.solid, .pill.accent, .seg button[aria-pressed="true"], .icon[aria-pressed="true"], .quick-btn,
+.cday.sel, .num.today, .line.sel, #pop, .tip, .toast, #panel.bubble, .del.confirm,
+#p-done[aria-pressed="true"], #p-allday[aria-pressed="true"] { text-shadow: none; }
+/* 图标不吃文字描边，玻璃很透时单独垫一层影子。 */
+.bare .icon svg, .bare .box, .bare .help, .bare .row-star svg, .bare .chev { filter: drop-shadow(0 0 3px rgb(var(--shade) / calc(0.75 * var(--halo)))); }
+.bare .icon[aria-pressed="true"] svg, .bare #panel.bubble svg, .bare #panel.bubble .box, .bare #panel.bubble .help, .bare #pop svg { filter: none; }
 
 /* ---------- 显隐过渡 ---------- */
 
@@ -219,6 +258,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 .rise { animation: rise 0.6s var(--curve) both; }
 .fade { animation: fade 0.3s var(--ease) both; }
+.swap { animation: fade 0.3s var(--ease) backwards; }
 .pop { animation: pop 0.35s cubic-bezier(0.3, 1.4, 0.5, 1) both; }
 .jelly { animation: jelly 0.45s var(--curve); }
 
@@ -294,16 +334,35 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .bar { flex-shrink: 0; display: block; height: 6px; border-radius: 3px; background: rgb(var(--fg) / 0.24); }
 .bar-fill { display: block; width: 0; height: 6px; border-radius: 3px; background: var(--accent); transition: width 0.4s var(--curve); }
 
-.sec { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
+/* 日程、待办、便签都可以点标题折起来。 */
+.sec { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; transition: flex-grow 0.45s var(--curve), min-height 0.45s var(--curve); }
 .sec.fill { flex: 1 1 0; min-height: 120px; }
 .list.fill { flex: 1 1 0; min-height: 0; }
 .ev-sec { flex: 0 1 auto; min-height: 104px; }
 .ev-sec .list { flex: 0 1 auto; min-height: 0; }
-.sec-head { display: flex; align-items: center; height: 28px; padding-left: 4px; }
+.sec-head { flex-shrink: 0; display: flex; align-items: center; height: 28px; }
+.sec-head h2 { display: flex; }
 .sec-head .icon { margin: -4px 0; }
+.sec-fold { display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px 0 4px; border-radius: 10px; letter-spacing: inherit; text-align: left; }
+.sec-fold .meta { margin-left: 4px; font-weight: 600; letter-spacing: 0; }
+.chev { flex-shrink: 0; transition: transform 0.4s var(--curve), opacity 0.2s ease; }
+.sec-fold .chev, .note-fold .chev { opacity: 0.55; }
+.sec-fold:hover .chev, .note-fold:hover .chev { opacity: 1; }
+.sec-fold[aria-expanded="false"] .chev, .note-fold[aria-expanded="false"] .chev { transform: rotate(-90deg); }
 
-.list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; transition: max-height 0.45s var(--curve), opacity 0.3s var(--ease), visibility 0s; }
 #events { max-height: 214px; }
+.sec.folded { min-height: 28px; }
+.sec.fill.folded { flex-grow: 0; }
+.sec.folded .list { opacity: 0; visibility: hidden; overflow: hidden; transition: max-height 0.45s var(--curve), opacity 0.2s var(--ease), visibility 0s linear 0.45s; }
+.ev-sec.folded #events { max-height: 0; }
+
+/* 看别的日子时：左边前一天，中间回今天，右边后一天。 */
+.day-nav { flex-shrink: 0; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+.day-nav .pill { display: flex; align-items: center; gap: 4px; }
+.day-nav .prev { justify-self: start; padding: 0 14px 0 8px; }
+.day-nav .next { justify-self: end; padding: 0 8px 0 14px; }
+.day-nav .pill[aria-pressed="true"] { border-color: transparent; background: var(--solid); color: var(--on-solid); text-shadow: none; }
 
 .ev {
   flex-shrink: 0;
@@ -319,19 +378,19 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   text-align: left;
 }
 .ev .t { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.ev .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--c, var(--accent)); }
+.ev .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--cm); }
 .ev .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ev .p { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .ev.past { color: rgb(var(--fg) / 0.78); }
 .ev.past .dot { border-color: transparent; background: rgb(var(--fg) / 0.55); }
 .ev.now-on .n { font-weight: 700; }
-.ev.now-on .dot { background: var(--c, var(--accent)); }
-.ev.sel, .td.sel { background-color: rgb(var(--fg) / 0.2); }
+.ev.now-on .dot { background: var(--cm); }
+.ev.sel, .td.sel { background-color: var(--sel); }
 
 .td { flex-shrink: 0; display: flex; align-items: center; min-height: 44px; border-radius: 16px; background-color: rgb(var(--fg) / 0); transition: background-color 0.25s ease, transform 0.25s var(--curve); }
 .td:hover { background-color: rgb(var(--fg) / 0.1); }
 .td:has(.check:hover):not(.sel) { background-color: rgb(var(--fg) / 0); }
-.td.sel, .td.sel:hover { background-color: rgb(var(--fg) / 0.2); }
+.td.sel, .td.sel:hover { background-color: var(--sel); }
 .td:has(.open:active) { transform: scale(0.98); }
 .td:has(.row-star:hover):not(.sel) { background-color: rgb(var(--fg) / 0.1); }
 .td .tap:hover { box-shadow: none; }
@@ -368,11 +427,15 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .td.done .name { text-decoration: line-through; }
 .star { flex-shrink: 0; color: var(--accent); }
 
-.note { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; border-radius: 22px; border: 1px solid rgb(var(--note-rgb) / 0.4); background: rgb(var(--note-rgb) / 0.18); }
-.note label, .note-label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--note); }
-.note textarea { width: 100%; padding: 0; border: 0; outline: 0; resize: none; background: transparent; line-height: 1.6; field-sizing: content; min-height: 3.2em; max-height: 8em; overflow-y: auto; }
+.note { flex-shrink: 0; display: flex; flex-direction: column; margin-top: auto; padding: 6px 16px 12px; border-radius: 22px; border: 1px solid rgb(var(--note-rgb) / 0.4); background: rgb(var(--note-rgb) / 0.18); transition: padding 0.45s var(--curve); }
+.note.folded { padding-bottom: 6px; }
+.note-label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--note); }
+.note-fold { display: flex; align-items: center; gap: 4px; width: 100%; height: 30px; margin: 0 -8px; padding: 0 8px; box-sizing: content-box; border-radius: 10px; text-align: left; color: var(--note); }
+.note-fold .peek { margin-left: 6px; font-size: 13px; color: rgb(var(--fg) / 0.86); opacity: 0; transition: opacity 0.3s var(--ease); }
+.note.folded .peek { opacity: 1; }
+.note textarea { display: block; width: 100%; padding: 0; border: 0; outline: 0; resize: none; background: transparent; line-height: 1.6; field-sizing: content; min-height: 3.2em; max-height: 8em; overflow-y: auto; }
 
-.quick { flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 5px 0 18px; border-radius: 23px; border: 1px solid rgb(var(--fg) / 0.28); background: rgb(var(--fg) / 0.12); }
+.quick { flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 5px 0 18px; border-radius: 23px; border: 1px solid var(--field-edge); background: var(--field); }
 .quick input { flex: 1 1 0; min-width: 0; height: 44px; border: 0; outline: 0; background: transparent; }
 .quick-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: var(--on-accent); }
 
@@ -405,9 +468,9 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .big-wrap { position: relative; flex: 1 1 0; min-height: 0; }
 .big-grid { height: 100%; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 4px; }
 
-.cell { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 2px; border-radius: 12px; border: 1px solid transparent; background-color: rgb(var(--fg) / 0.06); transition: background-color 0.3s ease, border-color 0.3s ease; }
+.cell { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 2px; border-radius: 12px; border: 1px solid transparent; background-color: var(--cell); transition: background-color 0.3s ease, border-color 0.3s ease; }
 .cell.out { background-color: rgb(var(--fg) / 0); }
-.cell.sel { border-color: rgb(var(--fg) / 0.55); background-color: rgb(var(--fg) / 0.16); }
+.cell.sel { border-color: rgb(var(--fg) / 0.55); background-color: var(--cell-sel); }
 .cell-head { flex-shrink: 0; display: flex; align-items: center; height: 20px; padding-left: 3px; }
 .badge { flex: 1 1 0; display: flex; align-items: center; gap: 4px; font-size: 11px; color: rgb(var(--fg) / 0.86); font-variant-numeric: tabular-nums; }
 .badge i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgb(var(--fg)); }
@@ -416,7 +479,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .cell.out .num, .cell.out .line { color: rgb(var(--fg) / 0.7); }
 
 .line { flex-shrink: 0; display: grid; grid-template-columns: 2px minmax(0, 1fr) auto; align-items: center; column-gap: 3px; width: 100%; height: 14px; padding: 0 1px; border-radius: 5px; background-color: rgb(var(--fg) / 0); font-size: 11px; text-align: left; }
-.line i { width: 2px; height: 10px; border-radius: 1px; background: var(--c, var(--accent)); }
+.line i { width: 2px; height: 10px; border-radius: 1px; background: var(--cm); }
 .line .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line .t { font-size: 10px; opacity: 0.82; font-variant-numeric: tabular-nums; }
 .line.more i { background: transparent; }
@@ -426,8 +489,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .pop-head { flex-shrink: 0; padding-left: 6px; }
 #pop-list { gap: 2px; min-height: 0; overflow-y: auto; }
 .prow { flex-shrink: 0; display: grid; grid-template-columns: 12px minmax(0, 1fr); align-items: center; column-gap: 8px; width: 100%; min-height: 40px; padding: 4px 6px; border-radius: 12px; background-color: rgb(var(--fg) / 0); text-align: left; }
-.prow.sel { background-color: rgb(var(--fg) / 0.2); }
-.prow .mark { justify-self: center; width: 3px; height: 26px; border-radius: 2px; background: var(--c, var(--accent)); }
+.prow.sel { background-color: var(--sel); }
+.prow .mark { justify-self: center; width: 3px; height: 26px; border-radius: 2px; background: var(--cm); }
 .prow.todo { grid-template-columns: 26px minmax(0, 1fr); column-gap: 2px; padding: 0 6px 0 0; }
 .prow.todo .pcheck { display: flex; align-items: center; justify-content: center; width: 26px; height: 40px; border-radius: 10px; }
 .prow.todo .popen { min-width: 0; display: flex; flex-direction: column; align-self: stretch; justify-content: center; padding: 4px 0; text-align: left; }
@@ -462,6 +525,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 #panel.bubble { width: 230px; }
 #panel.bubble .zoom { zoom: 0.72; width: 320px; }
 #panel.bubble .arrow { display: block; }
+#panel.bubble .glass { opacity: 1; }
+#panel.bubble .zoom { box-shadow: 0 18px 44px rgb(10 6 24 / 0.5); }
 #panel.bubble .glass::before { display: none; }
 #panel.bubble .glass::after { background: var(--pop); }
 #panel.bubble #panel-body { max-height: 616px; }
@@ -487,6 +552,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 #settings .glass { --r: 412px; --t: 24px; }
 #settings-body { position: relative; display: flex; flex-direction: column; gap: 14px; max-height: var(--shell-h); overflow-y: auto; padding: 20px; }
 #s-connect .pill { width: 100%; }
+#s-connect .field { flex: none; }
 
 /* ---------- 提示 ---------- */
 
@@ -533,26 +599,24 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 .fold { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 8px; height: 36px; margin: -4px -8px; padding: 0 8px; border-radius: 12px; text-align: left; }
 .fold .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fold .chev { flex-shrink: 0; transition: transform 0.4s var(--curve); }
 .fold[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .foldable { display: grid; grid-template-rows: 0fr; margin: 0 -4px; transition: grid-template-rows 0.4s var(--curve); }
 .foldable.open { grid-template-rows: 1fr; }
 .foldable > .clip { min-height: 0; overflow: hidden; visibility: hidden; transition: visibility 0s linear 0.4s; }
 .foldable.open > .clip { visibility: visible; transition: visibility 0s; }
 .foldable .inner { padding: 4px; }
+.foldable.flat { margin: 0; }
 
 /* ---------- v0.4 ---------- */
 
 .chip:disabled { cursor: default; }
 .chip:disabled:hover { box-shadow: none; }
-.mini-select { flex: 0 1 auto; min-width: 0; max-width: 150px; height: 28px; padding: 0 6px; border-radius: 14px; border: 1px solid rgb(var(--fg) / 0.24); background: rgb(var(--fg) / 0.1); font-size: 12px; }
+.mini-select { flex: 0 1 auto; min-width: 0; max-width: 150px; height: 28px; padding: 0 6px; border-radius: 14px; border: 1px solid var(--field-edge); background: var(--field); font-size: 12px; }
 #p-allday[aria-pressed="true"] { border-color: transparent; background: var(--solid); color: var(--on-solid); }
-.pill.mini { flex: none; height: 28px; padding: 0 10px; border-color: rgb(var(--fg) / 0.32); font-size: 12px; }
+.pill.mini { flex: none; height: 28px; padding: 0 10px; font-size: 12px; }
 
-.del { align-self: center; height: 36px; padding: 0 18px; border-radius: 18px; color: #ff9b9b; font-size: 13px; font-weight: 600; }
+.del { align-self: center; height: 36px; padding: 0 18px; border-radius: 18px; color: var(--danger); font-size: 13px; font-weight: 600; }
 .del.confirm { background: #e5484d; color: #fff; }
-[data-theme="light"] .del { color: #b4232a; }
-[data-theme="light"] .del.confirm { color: #fff; }
 
 .toast { position: fixed; z-index: 9; display: flex; align-items: center; gap: 10px; max-width: 340px; height: 44px; padding: 0 6px 0 16px; border-radius: 22px; border: 1px solid var(--edge); background: var(--pop); box-shadow: 0 12px 32px rgb(10 6 24 / 0.45); font-size: 13px; }
 .toast-btn { flex-shrink: 0; height: 32px; padding: 0 14px; border-radius: 16px; background: rgb(var(--fg) / 0.14); font-weight: 700; color: var(--accent-ink); }
@@ -567,13 +631,17 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   .sec-head { height: 24px; }
   .ev { height: 32px; }
   .td, .td .check, .td .open, .row-star { min-height: 40px; height: auto; }
-  .note { gap: 2px; padding: 8px 14px; border-radius: 18px; }
+  .note { padding: 2px 14px 8px; border-radius: 18px; }
+  .note.folded { padding-bottom: 2px; }
+  .note-fold { height: 26px; }
   .note textarea { min-height: 1.6em; }
   .quick { height: 42px; }
   .quick input { height: 40px; }
   .ev-sec { min-height: 92px; }
   #events { max-height: 102px; }
   .sec.fill { min-height: 108px; }
+  .sec.folded { min-height: 24px; }
+  .sec-fold { height: 24px; }
 }
 #pop-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pop-head .pill.mini { padding: 0 8px; }

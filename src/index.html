@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" class="no-wp" data-theme="dark">
+<html lang="zh-CN" class="no-wp" data-theme="dark" data-ink="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -113,10 +113,13 @@
 
       <div class="block">
         <div class="row between">
-          <label for="s-tint" class="h2">不透明度</label>
+          <span class="row gap6">
+            <label for="s-tint" class="h2">不透明度</label>
+            <button type="button" class="help" data-tip="拖到最左边是完全透明：玻璃消失，只留文字。&#10;文字颜色会按壁纸的明暗自动调整。" aria-label="说明">?</button>
+          </span>
           <span id="s-tint-text" class="strong"></span>
         </div>
-        <input id="s-tint" type="range" min="20" max="95" step="1">
+        <input id="s-tint" type="range" min="0" max="100" step="1">
       </div>
 
       <div id="s-switches" class="col"></div>
@@ -219,14 +222,22 @@
             </span>
           </button>
 
-          <button id="back-today" type="button" class="pill small back tap" data-act="go-today" hidden>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3L4.5 7l4 4"/></svg>
-            <span>今天</span>
-          </button>
+          <div id="day-nav" class="day-nav" hidden>
+            <button type="button" class="pill small prev tap" data-act="day-prev">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3L4.5 7l4 4"/></svg>
+              <span>前一天</span>
+            </button>
+            <button id="nav-today" type="button" class="pill small tap" data-act="go-today" aria-pressed="false">今天</button>
+            <button type="button" class="pill small next tap" data-act="day-next">
+              <span>后一天</span>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 3l4 4-4 4"/></svg>
+            </button>
+          </div>
 
-          <section class="sec ev-sec">
+          <section id="sec-ev" class="sec ev-sec">
             <div class="sec-head">
-              <h2 class="grow">日程</h2>
+              <h2><button type="button" class="sec-fold tap" data-act="fold" data-k="ev" aria-expanded="true" aria-controls="events" data-tip="点标题折叠 / 展开"><span>日程</span><svg class="chev" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5.5L7 9l3.5-3.5"/></svg><span id="ev-meta" class="meta"></span></button></h2>
+              <span class="grow"></span>
               <button type="button" class="icon small tap" data-act="add-event" aria-label="新建日程">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
               </button>
@@ -234,9 +245,10 @@
             <div id="events" class="list scroll"></div>
           </section>
 
-          <section class="sec fill">
+          <section id="sec-td" class="sec fill">
             <div class="sec-head">
-              <h2 class="grow">待办</h2>
+              <h2><button type="button" class="sec-fold tap" data-act="fold" data-k="td" aria-expanded="true" aria-controls="todos" data-tip="点标题折叠 / 展开"><span>待办</span><svg class="chev" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5.5L7 9l3.5-3.5"/></svg><span id="td-meta" class="meta"></span></button></h2>
+              <span class="grow"></span>
               <button type="button" class="icon small tap" data-act="add-todo" aria-label="新建待办">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
               </button>
@@ -244,9 +256,13 @@
             <div id="todos" class="list scroll fill"></div>
           </section>
 
-          <section class="note">
-            <label for="note">便签</label>
-            <textarea id="note" rows="2" spellcheck="false"></textarea>
+          <section id="sec-note" class="note">
+            <button type="button" class="note-fold tap" data-act="fold" data-k="note" aria-expanded="true" aria-controls="note" data-tip="点标题折叠 / 展开">
+              <span class="note-label">便签</span><svg class="chev" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5.5L7 9l3.5-3.5"/></svg><span id="note-peek" class="peek ellipsis grow"></span>
+            </button>
+            <div id="note-wrap" class="foldable flat open"><div class="clip">
+              <textarea id="note" rows="2" spellcheck="false" aria-label="便签"></textarea>
+            </div></div>
           </section>
         </div>
 

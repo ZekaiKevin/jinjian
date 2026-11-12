@@ -68,7 +68,11 @@ function replay(el, cls) {
 // ---------- 数据 ----------
 
 function defaults() {
-  return { theme: 'dark', tint: 50, blur: true, carry: true, autostart: false, top: false, sync: { on: false, user: '', cals: [], target: '' } };
+  return {
+    theme: 'dark', tint: 50, blur: true, carry: true, autostart: false, top: false,
+    fold: { ev: false, td: false, note: false }, // 日程、待办、便签各自是否折起来
+    sync: { on: false, user: '', cals: [], target: '' },
+  };
 }
 
 const S = {
@@ -84,6 +88,7 @@ const S = {
   big: false,       // 是否展开成月视图
   compact: '',      // ''、'card'（迷你条）、'capsule'（贴边胶囊）
   date: today(),    // 当前看的日期
+  nav: false,       // 用“前一天 / 后一天”一路翻回今天时，那一排按钮先留着，方便接着翻
   vm: null,         // 日历显示的月份 { y, m }
   sel: null,        // 详情里打开的条目
   pop: null,        // 月视图里弹出小窗口的日期
@@ -121,7 +126,10 @@ async function load() {
     if (d.notified && d.notified.ids) S.notified = d.notified;
     if (d.settings) {
       const base = defaults();
-      S.settings = Object.assign(base, d.settings, { sync: Object.assign(base.sync, d.settings.sync || {}) });
+      S.settings = Object.assign(base, d.settings, {
+        sync: Object.assign(base.sync, d.settings.sync || {}),
+        fold: Object.assign(base.fold, d.settings.fold || {}),
+      });
     }
     if (d.remote && d.remote.res) S.remote = { res: d.remote.res, at: d.remote.at || 0 };
   } catch (err) {
@@ -566,8 +574,21 @@ function renderDay(map, info) {
   setHtml($('pips'), pipsHtml(todos));
   $('count').textContent = todos.filter((x) => x.done).length + '/' + todos.length;
 
+  const fold = S.settings.fold;
+  [['ev', 'sec-ev'], ['td', 'sec-td'], ['note', 'sec-note']].forEach((x) => {
+    const sec = $(x[1]);
+    sec.classList.toggle('folded', !!fold[x[0]]);
+    sec.querySelector('[data-act="fold"]').setAttribute('aria-expanded', fold[x[0]] ? 'false' : 'true');
+  });
+  $('note-wrap').classList.toggle('open', !fold.note);
+  // 折起来以后，标题旁边留一个数，便签留第一行
+  $('ev-meta').textContent = fold.ev && events.length ? String(events.length) : '';
+  $('td-meta').textContent = fold.td && todos.length ? todos.filter((x) => x.done).length + '/' + todos.length : '';
+  $('note-peek').textContent = (S.note.split('\n').find((l) => l.trim()) || '').trim();
+
   $('now').hidden = !isToday;
-  $('back-today').hidden = isToday;
+  $('day-nav').hidden = isToday && !S.nav;
+  $('nav-today').setAttribute('aria-pressed', isToday ? 'true' : 'false');
   if (isToday) {
     $('now').dataset.id = info.id;
     $('now').classList.toggle('empty', info.empty);
@@ -925,12 +946,51 @@ function hideToast() {
 
 // ---------- 设置 ----------
 
+let wallRgb = null; // 小组件背后那块壁纸的平均颜色；读不到就是 null
+
+function luminance(rgb) {
+  const f = (c) => { const v = c / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+
+// 玻璃长什么样，全由“不透明度”决定：
+//   0        完全透明：模糊、底色、边框、阴影都没有，只剩文字
+//   0 ~ 25   玻璃慢慢显出来
+//   25 ~ 100 底色越来越实
+// 文字用浅色还是深色，不直接跟主题走，而是算一下“壁纸 + 玻璃”叠出来有多亮再定，
+// 这样浅色主题调得很透、壁纸又暗的时候，字不会变成深色压在深色上。
+function applyGlass() {
+  const s = S.settings;
+  const light = root.dataset.theme === 'light';
+  const t = Math.max(0, Math.min(1, s.tint / 100));
+  const drawn = s.blur && !root.classList.contains('no-wp'); // 玻璃里画着模糊的壁纸
+  const glass = Math.min(1, t / 0.25);
+  let veil = light ? 1 - Math.pow(1 - t, 1.5) : t;          // 浅色玻璃要实一些才干净
+  if (s.blur && !drawn) veil = 1 - Math.pow(1 - veil, 2);   // 想要模糊却读不到壁纸：底色再实一些
+  const covered = veil * glass;
+  // 背后是清晰的桌面时（玻璃很透，或者没画模糊），给文字垫一圈晕
+  const halo = drawn ? 1 - glass : Math.max(0, Math.min(1, (0.7 - covered) / 0.7));
+
+  const wall = wallRgb || [96, 96, 104]; // 不知道壁纸什么样，按偏暗的灰算
+  const veilRgb = light ? [250, 249, 253] : [22, 18, 36];
+  const boost = light && drawn ? 1.12 : 1;
+  const lum = luminance(wall.map((c, i) => {
+    const inner = Math.min(255, c * boost) * (1 - veil) + veilRgb[i] * veil;
+    return c * (1 - glass) + inner * glass;
+  }));
+  root.dataset.ink = (light ? lum >= 0.17 : lum > 0.26) ? 'dark' : 'light';
+  root.style.setProperty('--tint', veil.toFixed(3));
+  root.style.setProperty('--glass', glass.toFixed(3));
+  root.style.setProperty('--halo', halo.toFixed(3));
+  root.classList.toggle('bare', halo > 0.02);
+}
+
 function applySettings() {
   const s = S.settings;
   const light = s.theme === 'light' || (s.theme === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
   root.dataset.theme = light ? 'light' : 'dark';
-  root.style.setProperty('--tint', (s.tint / 100).toFixed(2));
   root.classList.toggle('no-blur', !s.blur);
+  applyGlass();
   // 快速记录窗口和这里是同一个来源，读得到这条
   try { localStorage.setItem('jinjian-theme', root.dataset.theme); } catch (err) { /* 存不了就算了 */ }
   if (TAURI && TAURI.event && TAURI.event.emit) TAURI.event.emit('theme', root.dataset.theme).catch(() => {});
@@ -1043,9 +1103,35 @@ function layout() {
   root.style.setProperty('--shell-h', Math.max(480, Math.min(864, avail - 48)) + 'px');
 }
 
+// 量一下小组件背后（屏幕右上那一块）的壁纸平均是什么颜色，用来决定文字用浅色还是深色。
+function sampleWall(img, sw, sh, scale) {
+  try {
+    const W = 64;
+    const H = Math.max(1, Math.round((W * sh) / sw));
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const g = canvas.getContext('2d', { willReadFrequently: true });
+    const cw = sw / scale;
+    const ch = sh / scale;
+    g.drawImage(img, (img.naturalWidth - cw) / 2, (img.naturalHeight - ch) / 2, cw, ch, 0, 0, W, H); // 和屏幕上一样的裁切
+    const x0 = Math.max(0, Math.min(W - 1, Math.floor(W * (1 - 400 / sw))));
+    const y1 = Math.max(1, Math.min(H, Math.ceil((H * 900) / sh)));
+    const d = g.getImageData(x0, 0, W - x0, y1).data;
+    const sum = [0, 0, 0];
+    for (let i = 0; i < d.length; i += 4) { sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2]; }
+    const n = d.length / 4;
+    return n ? [sum[0] / n, sum[1] / n, sum[2] / n] : null;
+  } catch (err) {
+    return null; // 图片不让读像素（浏览器预览里的跨域图片）
+  }
+}
+
 // 把壁纸按“填充”方式铺满屏幕，算出它相对屏幕的偏移，玻璃内部据此对位。
-function showWallpaper(url, sw, sh) {
+function showWallpaper(url, sw, sh, plain) {
   const img = new Image();
+  const cors = !plain && !/^(blob|data):/.test(url);
+  if (cors) img.crossOrigin = 'anonymous'; // 只有浏览器预览会走到这里
   img.onload = () => {
     const s = Math.max(sw / img.naturalWidth, sh / img.naturalHeight);
     root.style.setProperty('--wp', 'url("' + url + '")');
@@ -1053,8 +1139,15 @@ function showWallpaper(url, sw, sh) {
     root.style.setProperty('--ox', ((img.naturalWidth * s - sw) / 2) + 'px');
     root.style.setProperty('--oy', ((img.naturalHeight * s - sh) / 2) + 'px');
     root.classList.remove('no-wp');
+    wallRgb = sampleWall(img, sw, sh, s);
+    applyGlass();
   };
-  img.onerror = () => root.classList.add('no-wp');
+  img.onerror = () => {
+    if (cors) { showWallpaper(url, sw, sh, true); return; }
+    root.classList.add('no-wp');
+    wallRgb = null;
+    applyGlass();
+  };
   img.src = url;
 }
 
@@ -1207,10 +1300,28 @@ function onAct(act, t) {
       if (S.sel === it.id) $('p-done').setAttribute('aria-pressed', it.done ? 'true' : 'false');
       break;
     }
-    case 'add-event': addItem('event', { date: S.date }, true); return;
-    case 'add-todo': addItem('todo', { date: S.date }, true); return;
+    case 'add-event': S.settings.fold.ev = false; addItem('event', { date: S.date }, true); return;
+    case 'add-todo': S.settings.fold.td = false; addItem('todo', { date: S.date }, true); return;
+    case 'fold': {
+      const k = t.dataset.k;
+      S.settings.fold[k] = !S.settings.fold[k];
+      save();
+      break;
+    }
+    case 'day-prev': case 'day-next': {
+      const d = fromIso(S.date);
+      d.setDate(d.getDate() + (act === 'day-next' ? 1 : -1));
+      S.date = iso(d);
+      S.nav = true;
+      S.vm = { y: d.getFullYear(), m: d.getMonth() };
+      if (S.panel === 'detail') { setSel(null); S.panel = ''; }
+      replay($('events'), 'swap');
+      replay($('todos'), 'swap');
+      break;
+    }
     case 'view': {
       const d = fromIso(S.date);
+      S.nav = false;
       S.mode = S.mode === 'cal' ? 'day' : 'cal';
       S.vm = { y: d.getFullYear(), m: d.getMonth() };
       break;
@@ -1229,7 +1340,7 @@ function onAct(act, t) {
       if (S.panel) fillSettings();
       break;
     case 's-close': case 'p-close': closePanels(); return;
-    case 'compact': setSel(null); S.compact = 'card'; S.panel = ''; S.pop = null; break;
+    case 'compact': setSel(null); S.compact = 'card'; S.panel = ''; S.pop = null; S.nav = false; break;
     case 'dock': S.compact = 'capsule'; break;
     case 'expand': S.compact = ''; break;
     case 'big-open': setSel(null); S.big = true; S.panel = ''; break;
@@ -1238,12 +1349,14 @@ function onAct(act, t) {
     case 'next-month': shiftMonth(1); break;
     case 'go-today': {
       const d = new Date();
+      if (S.date !== today()) { replay($('events'), 'swap'); replay($('todos'), 'swap'); }
       S.date = today();
+      S.nav = false;
       S.vm = { y: d.getFullYear(), m: d.getMonth() };
       S.pop = null;
       break;
     }
-    case 'pick-day': S.date = date; S.mode = 'day'; break;
+    case 'pick-day': S.date = date; S.mode = 'day'; S.nav = false; break;
     case 'pop-day': {
       const d = fromIso(date);
       S.date = date;
@@ -1553,6 +1666,7 @@ async function start() {
   setInterval(() => {
     if (today() !== S.day) {
       if (S.date === S.day) S.date = today();
+      S.nav = false;
       S.day = today();
       rollOver();
       rebuildRemote();
