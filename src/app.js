@@ -20,7 +20,7 @@ const CROSS = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" strok
 const SWITCHES = [
   { k: 'blur', name: '背景模糊', tip: '关掉后玻璃里不再画模糊的壁纸，只留半透明的底色，更省资源。' },
   { k: 'lock', name: '鼠标穿透', tip: '开启后鼠标会穿过小组件，点到后面的桌面。\n按 Alt + L，或在托盘图标的菜单里关闭。' },
-  { k: 'carry', name: '未完成顺延到明天', tip: '当天没勾掉的待办，第二天会自动出现在当天的列表里，不标逾期。' },
+  { k: 'carry', name: '未完成顺延到明天', tip: '当天没勾掉的待办，第二天会自动出现在当天的列表里，不标逾期。\n关掉后，今天的待办上方会提示之前还有几项没做完，可以一键移到今天。' },
   { k: 'autostart', name: '开机自启' },
 ];
 const TIP_CONNECT = '填 Apple ID 邮箱和“App 专用密码”（不是登录密码）。\n专用密码在 account.apple.com →“登录与安全”→“App 专用密码”里生成，保存在 Windows 凭据管理器里。';
@@ -89,6 +89,7 @@ const S = {
   compact: '',      // ''、'card'（迷你条）、'capsule'（贴边胶囊）
   date: today(),    // 当前看的日期
   nav: false,       // 用“前一天 / 后一天”一路翻回今天时，那一排按钮先留着，方便接着翻
+  prevMode: 'day',  // 打开月视图前是小组件还是折叠日历，收起时回去
   vm: null,         // 日历显示的月份 { y, m }
   sel: null,        // 详情里打开的条目
   pop: null,        // 月视图里弹出小窗口的日期
@@ -562,6 +563,9 @@ function renderHeader() {
   $('b-view').setAttribute('aria-pressed', S.mode === 'cal' ? 'true' : 'false');
   $('b-settings').setAttribute('aria-pressed', S.panel === 'settings' ? 'true' : 'false');
   $('b-lock').setAttribute('aria-pressed', S.locked ? 'true' : 'false');
+  $('b-lock').dataset.tip = S.locked ? '鼠标穿透中（Alt + L 解除）' : '鼠标穿透（Alt + L）';
+  root.classList.toggle('locked', !!S.locked);
+  $('day-step').hidden = S.mode === 'cal';
 }
 
 function renderDay(map, info) {
@@ -615,7 +619,12 @@ function renderDay(map, info) {
       + '</button>';
   }).join(''));
 
-  setHtml($('todos'), todos.map((t) => {
+  let overdue = '';
+  if (isToday && !S.settings.carry) {
+    const n = S.items.filter((x) => x.kind === 'todo' && !x.done && x.date < S.date).length;
+    if (n) overdue = '<div class="overdue"><span class="grow">' + n + ' 项之前没做完</span><button type="button" class="pill mini tap" data-act="carry-now">移到今天</button></div>';
+  }
+  setHtml($('todos'), overdue + todos.map((t) => {
     const subs = t.subs || [];
     const bits = [];
     if (t.due) bits.push(t.due);
@@ -771,8 +780,9 @@ function positionPanel() {
     panel.style.transformOrigin = '';
     return;
   }
-  const W = 230;
+  const W = panel.offsetWidth || 248;
   const h = panel.offsetHeight;
+  const bigH = Math.min(640, parseFloat(getComputedStyle(root).getPropertyValue('--shell-h')) || 864); // 和 applyMode 里一致
   const grid = $('big-grid');
   const anchor = grid.querySelector('.line.sel') || (find(S.sel) ? grid.querySelector('.cell[data-date="' + find(S.sel).date + '"] .num') : null);
   const shellRight = window.innerWidth - 24;
@@ -788,7 +798,7 @@ function positionPanel() {
   const ay = a.top + a.height / 2;
   const onRight = cell.left + cell.width / 2 < shellLeft + 768 * 0.55;
   const left = onRight ? cell.right + 12 : cell.left - 12 - W;
-  const top = Math.max(36, Math.min(24 + 640 - 12 - h, ay - 56));
+  const top = Math.max(36, Math.min(24 + bigH - 12 - h, ay - 56));
   const at = Math.max(30, Math.min(h - 40, ay - top));
   panel.style.top = Math.round(top) + 'px';
   panel.style.right = Math.round(window.innerWidth - left - W) + 'px';
@@ -978,7 +988,12 @@ function applyGlass() {
     const inner = Math.min(255, c * boost) * (1 - veil) + veilRgb[i] * veil;
     return c * (1 - glass) + inner * glass;
   }));
-  root.dataset.ink = (light ? lum >= 0.17 : lum > 0.26) ? 'dark' : 'light';
+  const ink = (light ? lum >= 0.17 : lum > 0.26) ? 'dark' : 'light';
+  root.dataset.ink = ink;
+  // 设置和详情：玻璃越透，底色越往 --pop 靠；底色和文字深浅对不上时（浅色玻璃配浅色字）直接用 --pop
+  const clash = light === (ink === 'light');
+  const solidify = clash ? 1 : Math.max(0, Math.min(1, (0.45 - covered) / 0.45));
+  root.style.setProperty('--solidify', solidify.toFixed(3));
   root.style.setProperty('--tint', veil.toFixed(3));
   root.style.setProperty('--glass', glass.toFixed(3));
   root.style.setProperty('--halo', halo.toFixed(3));
@@ -1173,7 +1188,7 @@ function checkReminders() {
   allItems().forEach((it) => {
     if (it.kind === 'todo') {
       const due = toMin(it.due);
-      const key = 'due|' + it.id;
+      const key = 'due|' + it.id + '@' + it.due;
       if (it.done || it.date !== t || due === null || S.notified.ids[key]) return;
       if (n >= due && n <= due + 10) {
         S.notified.ids[key] = 1;
@@ -1185,9 +1200,10 @@ function checkReminders() {
     if (it.kind !== 'event' || it.date !== t || it.allDay || !it.remind || it.remind === 'none') return;
     const s = toMin(it.start);
     const before = Number(it.remind);
-    if (s === null || isNaN(before) || S.notified.ids[it.id]) return;
+    const key = it.id + '@' + it.start + '@' + before;
+    if (s === null || isNaN(before) || S.notified.ids[key]) return;
     if (n >= s - before && n <= s) {
-      S.notified.ids[it.id] = 1;
+      S.notified.ids[key] = 1;
       const lead = n < s ? span(s - n) + '后开始 · ' : '';
       call('notify', { title: it.title || '日程', body: lead + it.start + (it.place ? ' · ' + it.place : '') }).catch(() => {});
       save();
@@ -1302,6 +1318,13 @@ function onAct(act, t) {
     }
     case 'add-event': S.settings.fold.ev = false; addItem('event', { date: S.date }, true); return;
     case 'add-todo': S.settings.fold.td = false; addItem('todo', { date: S.date }, true); return;
+    case 'carry-now': {
+      const t0 = today();
+      S.items.forEach((x) => { if (x.kind === 'todo' && !x.done && x.date < t0) x.date = t0; });
+      save();
+      replay($('todos'), 'swap');
+      break;
+    }
     case 'fold': {
       const k = t.dataset.k;
       S.settings.fold[k] = !S.settings.fold[k];
@@ -1312,7 +1335,7 @@ function onAct(act, t) {
       const d = fromIso(S.date);
       d.setDate(d.getDate() + (act === 'day-next' ? 1 : -1));
       S.date = iso(d);
-      S.nav = true;
+      S.nav = !!t.closest('#day-nav'); // 用下面那一排翻回今天时，那一排先留着
       S.vm = { y: d.getFullYear(), m: d.getMonth() };
       if (S.panel === 'detail') { setSel(null); S.panel = ''; }
       replay($('events'), 'swap');
@@ -1343,8 +1366,8 @@ function onAct(act, t) {
     case 'compact': setSel(null); S.compact = 'card'; S.panel = ''; S.pop = null; S.nav = false; break;
     case 'dock': S.compact = 'capsule'; break;
     case 'expand': S.compact = ''; break;
-    case 'big-open': setSel(null); S.big = true; S.panel = ''; break;
-    case 'big-close': S.big = false; S.mode = 'day'; S.pop = null; break;
+    case 'big-open': setSel(null); S.prevMode = S.mode; S.big = true; S.panel = ''; break;
+    case 'big-close': S.big = false; S.mode = S.prevMode || 'day'; S.pop = null; break;
     case 'prev-month': shiftMonth(-1); break;
     case 'next-month': shiftMonth(1); break;
     case 'go-today': {
@@ -1389,7 +1412,7 @@ function onAct(act, t) {
         const sync = S.settings.sync;
         if (sync.on && sync.target) cur.cal = sync.target;
       }
-      delete cur.draft;
+      // 只是换了类型、什么都没写，关掉时照样不留下“未命名”
       save();
       fillPanel(cur);
       replay($('panel-body'), 'fade');
@@ -1491,14 +1514,28 @@ function onAct(act, t) {
   render();
 }
 
+// 点在玻璃上没东西的地方（不是按钮、输入框、浮层、某一行、滚动条）
+function isBlank(e) {
+  const el = e.target;
+  if (!(el instanceof Element)) return false;
+  if (el.closest('#panel, #settings, #pop, #toast, .tip, [data-act], button, input, textarea, select, label, a, .td, #big-grid .cell')) return false;
+  if (el.scrollHeight > el.clientHeight && e.offsetX >= el.clientWidth) return false; // 按在滚动条上
+  return true;
+}
+
 function bind() {
   bindTips();
+  let downBlank = false; // 按下和松开都在空白处才算，免得在详情里拖选文字、拖到外面松手时被收起
+  $('stage').addEventListener('pointerdown', (e) => { downBlank = isBlank(e); });
   $('stage').addEventListener('click', (e) => {
     const t = e.target.closest('[data-act]');
     if (t) { onAct(t.dataset.act, t); return; }
     // 月视图里点格子的空白处，也弹出这一天
     const cell = e.target.closest('#big-grid .cell');
-    if (cell) onAct('pop-day', cell);
+    if (cell) { onAct('pop-day', cell); return; }
+    // 点空白处：先收当天小窗口，再收详情 / 设置
+    if (!downBlank || !isBlank(e)) return;
+    if (S.pop) { S.pop = null; render(); } else if (S.panel) closePanels();
   });
   $('toast-btn').addEventListener('click', () => {
     const action = toastAction;

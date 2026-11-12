@@ -35,6 +35,8 @@
   --edge: rgb(255 255 255 / 0.32);
   --hi: rgb(255 255 255 / 0.55);
   --shadow: rgb(10 6 24 / calc(0.42 * var(--glass)));
+  --lift: rgb(10 6 24 / 0.42);
+  --solidify: 0;
   --shell-h: 864px;
   --wp: none;
   --wp-size: auto;
@@ -52,6 +54,7 @@
   --edge: rgb(255 255 255 / 0.8);
   --hi: rgb(255 255 255 / 0.9);
   --shadow: rgb(10 6 24 / calc(0.28 * var(--glass)));
+  --lift: rgb(10 6 24 / 0.28);
 }
 
 /* 深色字：玻璃够亮时用。由界面按“壁纸 + 玻璃”的实际明暗自动决定，
@@ -225,6 +228,16 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
     rgb(var(--bg) / var(--tint));
   box-shadow: inset 0 1px 0 var(--hi), inset 0 -12px 28px rgb(255 255 255 / 0.05);
 }
+/* 设置和详情是要动手改东西的地方：玻璃调得再透也不跟着消失，
+   底色越透就越往 --pop 靠（--pop 和文字颜色是配套的），文字不需要描边。 */
+#settings .glass, #panel:not(.bubble) .glass { opacity: 1; }
+#settings .glass::after, #panel:not(.bubble) .glass::after {
+  background:
+    linear-gradient(155deg, rgb(255 255 255 / 0.2) 0%, rgb(255 255 255 / 0.03) 36%, rgb(255 255 255 / 0.09) 100%),
+    color-mix(in srgb, rgb(var(--bg) / var(--tint)), var(--pop) calc(var(--solidify) * 100%));
+}
+#settings, #panel { --halo: 0; text-shadow: none; }
+
 /* 读不到壁纸，或关掉了背景模糊：玻璃里不画壁纸，底色直接盖在真实的桌面上。 */
 .no-wp .glass::before, .no-blur .glass::before { display: none; }
 
@@ -301,6 +314,20 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 .date-btn { flex-shrink: 0; display: flex; align-items: center; gap: 10px; margin: -4px -8px; padding: 4px 8px; border-radius: 16px; text-align: left; }
 .date-btn .month, .date-btn .week { display: block; }
+.day-step { gap: 0; }
+.day-step .icon.mini { width: 28px; }
+#widget header > .row:last-child .icon { width: 36px; }
+.day-step .icon { color: rgb(var(--fg) / 0.7); }
+.day-step .icon:hover { color: rgb(var(--fg)); }
+
+/* 鼠标穿透时点不动：按钮换成锁，迷你条和胶囊上也露出一把锁。 */
+.when-locked, .lock-badge { display: none; }
+.locked .when-locked { display: block; }
+.locked .when-free { display: none; }
+.lock-badge { position: relative; flex-shrink: 0; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 12px; background: rgb(var(--fg) / 0.14); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.locked .lock-badge { display: flex; }
+.locked #compact [data-act="dock"], .locked #compact [data-act="expand"] { display: none; }
+#capsule .lock-badge { width: 24px; padding: 0; justify-content: center; }
 .day { font-size: 46px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .month { font-size: 15px; font-weight: 700; }
 .week { font-size: 13px; color: rgb(var(--fg) / 0.86); }
@@ -338,7 +365,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .sec { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; transition: flex-grow 0.45s var(--curve), min-height 0.45s var(--curve); }
 .sec.fill { flex: 1 1 0; min-height: 120px; }
 .list.fill { flex: 1 1 0; min-height: 0; }
-.ev-sec { flex: 0 1 auto; min-height: 104px; }
+.ev-sec { flex: 0 1 auto; }
+.ev-sec:has(.ev) { min-height: 104px; }
 .ev-sec .list { flex: 0 1 auto; min-height: 0; }
 .sec-head { flex-shrink: 0; display: flex; align-items: center; height: 28px; }
 .sec-head h2 { display: flex; }
@@ -362,6 +390,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .day-nav .pill { display: flex; align-items: center; gap: 4px; }
 .day-nav .prev { justify-self: start; padding: 0 14px 0 8px; }
 .day-nav .next { justify-self: end; padding: 0 8px 0 14px; }
+.overdue { flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 4px 0 12px; border-radius: 12px; background: rgb(var(--fg) / 0.08); font-size: 13px; color: rgb(var(--fg) / 0.86); }
+.overdue .pill.mini { flex: none; }
 .day-nav .pill[aria-pressed="true"] { border-color: transparent; background: var(--solid); color: var(--on-solid); text-shadow: none; }
 
 .ev {
@@ -516,20 +546,42 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 /* ---------- 详情面板 / 气泡 ---------- */
 
 #panel { position: absolute; z-index: 2; top: 24px; right: 412px; width: 380px; transform-origin: right top; }
-#panel .zoom { position: relative; border-radius: 34px; box-shadow: 0 24px 60px var(--shadow); }
+#panel .zoom { position: relative; border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
 #panel .glass { --r: 412px; --t: 24px; }
 #panel-body { position: relative; display: flex; flex-direction: column; gap: 12px; max-height: var(--shell-h); overflow-y: auto; padding: 20px; }
 
 .arrow { display: none; position: absolute; z-index: -1; width: 16px; height: 16px; margin-top: -8px; border-radius: 3px; border: 1px solid var(--edge); background: var(--pop); transform: rotate(45deg); }
 
-#panel.bubble { width: 230px; }
-#panel.bubble .zoom { zoom: 0.72; width: 320px; }
+/* 月视图里的气泡：同一份详情，换一套紧凑尺寸（字不小于 11px，原生的日期、时间框也不会错位）。 */
+#panel.bubble { width: 248px; }
+#panel.bubble .zoom { border-radius: 22px; box-shadow: 0 18px 44px rgb(10 6 24 / 0.5); }
 #panel.bubble .arrow { display: block; }
 #panel.bubble .glass { opacity: 1; }
-#panel.bubble .zoom { box-shadow: 0 18px 44px rgb(10 6 24 / 0.5); }
 #panel.bubble .glass::before { display: none; }
 #panel.bubble .glass::after { background: var(--pop); }
-#panel.bubble #panel-body { max-height: 616px; }
+#panel.bubble #panel-body { gap: 8px; max-height: calc(min(640px, var(--shell-h)) - 24px); padding: 12px; font-size: 12px; }
+#panel.bubble .icon { width: 28px; height: 28px; }
+#panel.bubble .icon svg { width: 16px; height: 16px; }
+#panel.bubble .icon.ring { width: 30px; height: 30px; }
+#panel.bubble .chip { height: 22px; padding: 0 8px; border-radius: 11px; font-size: 11px; }
+#panel.bubble .meta, #panel.bubble .hint { font-size: 11px; }
+#panel.bubble .mini-select { height: 24px; max-width: 120px; font-size: 11px; }
+#panel.bubble .field { height: 30px; padding: 0 8px; border-radius: 10px; font-size: 12px; }
+#panel.bubble .field.title { height: 34px; padding: 0 10px; border-radius: 11px; font-size: 15px; }
+#panel.bubble .field.round { border-radius: 15px; }
+#panel.bubble .pill { height: 30px; border-radius: 15px; font-size: 12px; }
+#panel.bubble .pill.small { height: 30px; padding: 0 10px; }
+#panel.bubble .row.gap8 { gap: 4px; }
+#panel.bubble .frow { grid-template-columns: 30px minmax(0, 1fr); column-gap: 6px; }
+#panel.bubble .frow label { font-size: 11px; }
+#panel.bubble h2, #panel.bubble .note-label { font-size: 11px; }
+#panel.bubble .block { gap: 4px; }
+#panel.bubble .sub { min-height: 30px; }
+#panel.bubble .sub-toggle { width: 26px; height: 30px; }
+#panel.bubble .sub-name { height: 28px; padding: 0 6px; }
+#panel.bubble .sub-remove { width: 28px; height: 28px; }
+#panel.bubble .notes { padding: 8px 10px; border-radius: 12px; line-height: 1.5; }
+#panel.bubble .del { height: 28px; padding: 0 12px; border-radius: 14px; font-size: 12px; }
 
 .chip { display: flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 14px; border: 1px solid rgb(var(--accent-rgb) / 0.5); background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); font-size: 12px; font-weight: 700; }
 #p-cal { padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -548,7 +600,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 设置 ---------- */
 
-#settings { position: absolute; z-index: 2; top: 24px; right: 412px; width: 340px; border-radius: 34px; box-shadow: 0 24px 60px var(--shadow); }
+#settings { position: absolute; z-index: 2; top: 24px; right: 412px; width: 340px; border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
 #settings .glass { --r: 412px; --t: 24px; }
 #settings-body { position: relative; display: flex; flex-direction: column; gap: 14px; max-height: var(--shell-h); overflow-y: auto; padding: 20px; }
 #s-connect .pill { width: 100%; }
@@ -637,7 +689,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   .note textarea { min-height: 1.6em; }
   .quick { height: 42px; }
   .quick input { height: 40px; }
-  .ev-sec { min-height: 92px; }
+  .ev-sec:has(.ev) { min-height: 92px; }
   #events { max-height: 102px; }
   .sec.fill { min-height: 108px; }
   .sec.folded { min-height: 24px; }
