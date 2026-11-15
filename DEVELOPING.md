@@ -19,12 +19,12 @@
 ## 怎么测
 
 ```
-npm test                         # 日期识别 + 日历解析，纯 Node，1 秒内跑完；CI 里先跑它
-python3 tests/ui/ui8.py          # 界面测试，需要 Playwright（Python），不在 CI 里跑
+npm test                         # 日期识别、日历解析、农历、搜索、倒数日，纯 Node，几秒内跑完；CI 里先跑它
+python3 tests/ui/ui11.py         # 界面测试，需要 Playwright（Python），不在 CI 里跑
 ```
 
 - `tests/run.js` 会把 `TZ` 设成 `Asia/Shanghai` 再启动 `node --test`（期望值按上海时间写）。
-- `tests/ui/*.py` 用 Playwright 打开 `src/index.html`，`mock_cn.js` 假装成 Tauri 外壳和一个假的 iCloud。截图写到 `tests/ui/shots/`（不入库）。`ui3`–`ui8` 对应 0.3–0.6 各版本的改动，改到相关功能时一起跑。
+- `tests/ui/*.py` 用 Playwright 打开 `src/index.html`，`mock_cn.js` 假装成 Tauri 外壳和一个假的 iCloud。截图写到 `tests/ui/shots/`（不入库）。`ui3`–`ui8` 对应 0.3–0.6 各版本的改动，`ui9`（农历 / 休班）、`ui10`（Ctrl+F 搜索）、`ui11`（倒数日）是 0.7.0 的，改到相关功能时一起跑。界面测试里的“今天”是跑测试那天，要固定日期的断言都用 `S.date = ...; render()` 跳到具体日子，别依赖今天。
 - 修 bug 的习惯：先写一个在旧代码上会失败的测试，再改，再确认它变绿。
 - Rust 部分本地只能 `rustfmt` 查语法，真正编译要看 CI。
 
@@ -41,16 +41,23 @@ python3 tests/ui/ui8.py          # 界面测试，需要 Playwright（Python）�
 - **Win+D**：`desk.rs`。Windows 11 24H2 及以后把小组件挂在桌面窗口名下；更早的系统发现被盖住就立刻提回来。
 - **数据**：`%APPDATA%\com.zekaikevin.jinjian\data.json`；写盘是“临时文件 → 落盘 → 替换”，退出前先让页面把没存的写完（`flush` 事件 ↔ `flush_done` 命令）。
 - **iCloud**：`caldav.js` 负责对话，`ics.js` 负责日历文本；密码在 Windows 凭据管理器里；`dav` 命令只允许访问 `icloud.com` / `icloud.com.cn`。上传带 `If-Match`，失败会按 5 秒 / 30 秒 / 2 分钟 / 10 分钟重试。
+- **农历 / 休班**：`lunar.js` 里的农历表是 B36（1900–2100，和 ICU 只有 9 个年份被刻意修正：1954、1955、1999、2012、2018、2027、2030、2057、2070，以这张表为准，`tests/lunar.test.js` 里逐年锁着）；24 节气是算出来的，不是查表。休班表 `BUILTIN` 目前是 2025–2027，每年国务院办公厅的放假通知出来后要补下一年（或者让使用者用数据目录里的 `holidays.json` 覆盖，启动时 `get_holidays` 命令读、`Lunar.setHolidays` 解析，写坏了会被忽略）。设置里 `lunar` 管农历文字，`hol` 管休 / 班角标，两个都在 `renderHeader` / `renderCal` / `renderBig` 里读。
+- **搜索层**：`#search` 是 `#shell` 里和 `#widget`、`#big` 同级的一层（`S.search`），打开时先收详情 / 设置 / 小窗口、把迷你条展开，`S.searchBack` 记着打开前的状态，Esc 关掉时退回去；点结果跳转时不退回（`closeSearch(false)`）。输入法：组字时不搜，`compositionend` 才搜，Enter / Esc / 方向键在 `isComposing`、`keyCode 229` 或 `composing` 标志为真时一律不处理。iCloud 的重复日程每个系列只留离今天最近的一场（`search.js` 里按 `href` 去重）。
+- **倒数日**：本机条目上的 `countdown: true`；iCloud 条目的标记存在 `S.extras[id].countdown`（和子任务一样只在本机，`updateItem` 的远程分支处理，`rebuildRemote` 复制回条目）。顶部 `#countdowns` 在 `#widget` 的 `<header>` 和 `.views` 之间，没有倒数日时是 `hidden`（不占位置、不写字）；折叠日历的卡片高度在 `applyMode` 里加上它的高度。
 - **只开一个实例**：`tauri-plugin-single-instance` 要最先注册；再次启动时让已开着的那个展开并通知。
 
 ## 还没在真机上验证的（只在模拟环境里测过）
 
 Win+D 的行为、单实例的第二次启动、退出前保存、始终置顶切换、锁图标、系统通知。装上后如果哪个不对，先看这些。
 
+0.7.0 新增的、同样只在模拟环境里测过：新界面（头部农历行、月历 / 月视图的农历和“休 / 班”角标、搜索层、倒数日条）在真实 Windows 字体和缩放下的排版；`holidays.json` 经 Tauri 命令 `get_holidays` 读取（Rust 本地没法编译，只用 rustfmt 查过语法，靠 CI 编译）；窗口里按 Ctrl+F 时 WebView2 自带的查找条是否被挡住；真实微软拼音 / 搜狗输入法下搜索框的组字行为。
+
+已知的一个隐患（0.6.0 就有，只在模拟的 iCloud 里复现过）：本机新建的日程上传成 iCloud 日程后，再同步一次，条目的地址形式可能从带 `:443` 变成不带，导致按地址存在本机的附加内容（子任务，现在还有倒数日标记）对不上。真实 iCloud 是否这样没验证过。
+
 ## 路线
 
-- 0.6.0（当前）：解析错误修复（截止词、小数小时、不存在的日期、十点零五、跨午夜）、测试入库并接 CI、石墨灰配色。
-- 0.7.0：农历 / 24 节气 / 法定休班角标；本机日程和待办的重复；Ctrl+F 全局搜索；顶部倒数日条。
-- 0.8.0：可拖拽排期的周视图；桌面四角停靠 + 拖边改宽。
+- 0.6.0：解析错误修复（截止词、小数小时、不存在的日期、十点零五、跨午夜）、测试入库并接 CI、石墨灰配色。
+- 0.7.0（当前）：农历 / 24 节气 / 法定休班角标（`holidays.json` 可覆盖）；Ctrl+F 搜索；顶部倒数日条。
+- 后面：本机日程和待办的重复（原计划在 0.7.0，这次没做）；可拖拽排期的周视图；桌面四角停靠 + 拖边改宽。
 
 暂时没做、也没被要求做：多服务器 CalDAV / .ics 订阅、壁纸模式、多页便签、导出、Rust 拆模块。真要做订阅时，再补访问地址的安全限制（现在 `dav` 只放行 iCloud，所以不需要）。
