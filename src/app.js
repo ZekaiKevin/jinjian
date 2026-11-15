@@ -99,6 +99,7 @@ function lunarSay(z) {
 function defaults() {
   return {
     theme: 'dark', palette: 'indigo', tint: 50, blur: true, carry: true, lunar: true, hol: true, autostart: false, top: false,
+    corner: 'tr', width: 372, // 停靠在屏幕哪个角（tl / tr / bl / br）、小组件多宽（320–480）
     fold: { ev: false, td: false, note: false }, // 日程、待办、便签各自是否折起来
     sync: { on: false, user: '', cals: [], target: '' },
   };
@@ -1371,10 +1372,11 @@ function renderCompact(map, info) {
 function applyMode() {
   const shell = $('shell');
   const full = parseFloat(getComputedStyle(root).getPropertyValue('--shell-h')) || 864;
-  let w = 372;
+  let w = widthOf();
   let h = full;
+  $('grip').hidden = S.big || !!S.compact || S.search; // 只有平常的小组件能拖边改宽
   if (S.compact === 'card') {
-    w = 348;
+    w = widthOf() - 24;
     h = $('compact').offsetHeight;
   } else if (S.big) {
     w = 768;
@@ -1396,7 +1398,18 @@ function applyMode() {
   $('cal').classList.toggle('on', S.mode === 'cal');
 }
 
-// 详情：平时停在小组件左边；月视图里变成贴着那条日程的气泡。
+// 详情：平时停在小组件靠屏幕里面的那一侧；月视图 / 周视图里变成贴着那条日程的气泡。
+// 气泡的位置按停靠的角写：靠右用 right、靠左用 left，靠上用 top、靠下用 bottom（和 CSS 里用的是同一组属性，过渡才连得上）。
+function placePanel(left, top, W, h) {
+  const panel = $('panel');
+  const l = atLeft();
+  const b = atBottom();
+  panel.style.left = l ? Math.round(left) + 'px' : '';
+  panel.style.right = l ? '' : Math.round(window.innerWidth - left - W) + 'px';
+  panel.style.top = b ? '' : Math.round(top) + 'px';
+  panel.style.bottom = b ? Math.round(window.innerHeight - top - h) + 'px' : '';
+}
+
 function positionPanel() {
   const panel = $('panel');
   const arrow = panel.querySelector('.arrow');
@@ -1404,6 +1417,8 @@ function positionPanel() {
   if (!S.big) {
     panel.style.top = '';
     panel.style.right = '';
+    panel.style.bottom = '';
+    panel.style.left = '';
     panel.style.transformOrigin = '';
     return;
   }
@@ -1413,11 +1428,11 @@ function positionPanel() {
   const grid = $('big-grid');
   const wa = S.week ? weekAnchor() : null;
   const anchor = S.week ? (wa && wa.el) : grid.querySelector('.line.sel') || (find(S.sel) ? grid.querySelector('.cell[data-date="' + find(S.sel).date + '"] .num') : null);
-  const shellRight = window.innerWidth - 24;
-  const shellLeft = shellRight - 768;
+  // 展开后的外壳在哪（它还在变大的时候量不准，按停靠的角算）
+  const shellLeft = atLeft() ? 24 : window.innerWidth - 24 - 768;
+  const shellTop = atBottom() ? window.innerHeight - 24 - bigH : 24;
   if (!anchor) {
-    panel.style.top = '60px';
-    panel.style.right = (24 + (768 - W) / 2) + 'px';
+    placePanel(shellLeft + (768 - W) / 2, shellTop + 36, W, h);
     arrow.style.display = 'none';
     return;
   }
@@ -1427,10 +1442,9 @@ function positionPanel() {
   const ay = wa ? Math.max(wa.view.top + 12, Math.min(wa.view.bottom - 12, a.top + a.height / 2)) : a.top + a.height / 2;
   const onRight = cell.left + cell.width / 2 < shellLeft + 768 * 0.55;
   const left = onRight ? cell.right + 12 : cell.left - 12 - W;
-  const top = Math.max(36, Math.min(24 + bigH - 12 - h, ay - 56));
+  const top = Math.max(shellTop + 12, Math.min(shellTop + bigH - 12 - h, ay - 56));
   const at = Math.max(30, Math.min(h - 40, ay - top));
-  panel.style.top = Math.round(top) + 'px';
-  panel.style.right = Math.round(window.innerWidth - left - W) + 'px';
+  placePanel(left, top, W, h);
   panel.style.transformOrigin = (onRight ? 'left ' : 'right ') + Math.round(at) + 'px';
   arrow.style.display = '';
   arrow.style.top = Math.round(at) + 'px';
@@ -2003,6 +2017,7 @@ function fillSettings() {
   const s = S.settings;
   Array.prototype.forEach.call($('s-theme').children, (b) => b.setAttribute('aria-pressed', b.dataset.v === s.theme ? 'true' : 'false'));
   Array.prototype.forEach.call($('s-palette').children, (b) => b.setAttribute('aria-pressed', b.dataset.v === (s.palette === 'graphite' ? 'graphite' : 'indigo') ? 'true' : 'false'));
+  Array.prototype.forEach.call($('s-corner').children, (b) => b.setAttribute('aria-pressed', b.dataset.v === cornerOf() ? 'true' : 'false'));
   Array.prototype.forEach.call($('s-layer').children, (b) => b.setAttribute('aria-pressed', (b.dataset.v === 'top') === !!s.top ? 'true' : 'false'));
   $('s-tint').value = s.tint;
   $('s-tint-text').textContent = s.tint + '%';
@@ -2083,12 +2098,129 @@ function sendRectsSoon() {
   rectTimer = setTimeout(sendRects, 560);
 }
 
-function layout() {
-  const avail = invoke ? window.screen.availHeight : window.innerHeight;
-  root.style.setProperty('--shell-h', Math.max(480, Math.min(864, avail - 48)) + 'px');
+// ---------- 停靠的角、宽度、窗口在屏幕上的位置（0.8.1） ----------
+// 窗口由外壳摆（set_corner：贴工作区的左边或右边，高度占满工作区）；上下、左右怎么靠是 CSS 的事（html 上的 data-corner）。
+// 外壳把窗口、显示器、工作区的范围交回来（geo，物理像素），这里换算成 CSS 用的几个数。浏览器预览里没有外壳，geo 是 null，当作窗口就是整块屏幕。
+
+const CORNERS = ['tl', 'tr', 'bl', 'br'];
+const W_MIN = 320;
+const W_MAX = 480;
+const W_DEF = 372;
+let geo = null;
+
+const cornerOf = () => (CORNERS.indexOf(S.settings.corner) >= 0 ? S.settings.corner : 'tr');
+const atLeft = () => cornerOf().charAt(1) === 'l';
+const atBottom = () => cornerOf().charAt(0) === 'b';
+const geoScale = () => (geo && geo.scale) || window.devicePixelRatio || 1;
+// 屏幕（壁纸铺满的范围）和工作区的大小，CSS 像素
+const screenSize = () => (geo ? [geo.mon[2] / geoScale(), geo.mon[3] / geoScale()] : invoke ? [window.screen.width, window.screen.height] : [window.innerWidth, window.innerHeight]);
+const workHeight = () => (geo ? geo.work[3] / geoScale() : invoke ? window.screen.availHeight : window.innerHeight);
+// 窗口太窄（小屏幕、缩放很大）放不下“详情 + 最宽的小组件”时，最宽就到放得下为止
+function widthOf() {
+  const room = (geo ? geo.win[2] / geoScale() : window.innerWidth) - 428; // 详情 380 + 间距 16 + 两侧各 24，留 8
+  const max = Math.max(W_MIN, Math.min(W_MAX, Math.floor(room)));
+  const w = Number(S.settings.width);
+  return Math.max(W_MIN, Math.min(max, Number.isFinite(w) && w > 0 ? Math.round(w) : W_DEF));
 }
 
-// 量一下小组件背后（屏幕右上那一块）的壁纸平均是什么颜色，用来决定文字用浅色还是深色。
+// 把停靠的角、宽度、窗口边到屏幕边的距离写给 CSS；玻璃里的壁纸靠这几个数对到屏幕上
+function applyGeo() {
+  const k = geoScale();
+  let ex = 0;
+  let ey = 0;
+  if (geo) {
+    ex = (atLeft() ? geo.win[0] - geo.mon[0] : geo.mon[0] + geo.mon[2] - geo.win[0] - geo.win[2]) / k;
+    ey = (atBottom() ? geo.mon[1] + geo.mon[3] - geo.win[1] - geo.win[3] : geo.win[1] - geo.mon[1]) / k;
+  }
+  root.dataset.corner = cornerOf();
+  root.style.setProperty('--ex', ex + 'px');
+  root.style.setProperty('--ey', ey + 'px');
+  root.style.setProperty('--w', widthOf() + 'px');
+  root.classList.toggle('narrow', widthOf() < W_DEF); // 比默认窄：头上的图标收紧（style.css 里的 .narrow）
+}
+
+function layout() {
+  root.style.setProperty('--shell-h', Math.max(480, Math.min(864, workHeight() - 48)) + 'px');
+}
+
+// 让外壳按停靠的角摆窗口，再把界面对上。quiet：启动时用，窗口本来就还没显示出东西，不用藏。
+let dockSeq = 0;
+async function dockWindow(quiet) {
+  const seq = (dockSeq += 1);
+  if (!quiet) root.classList.add('docking');
+  if (invoke) {
+    try { geo = (await invoke('set_corner', { corner: cornerOf() })) || null; } catch (err) { geo = null; }
+    if (seq !== dockSeq) return; // 又选了别的角，以后一次为准
+  }
+  applyGeo();
+  layout();
+  if (!quiet) {
+    render();
+    loadWallpaper(); // 文字深浅看的是小组件背后那一块壁纸，换了角要重新量
+    // 等这一帧画完再显示
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (seq === dockSeq) root.classList.remove('docking'); }));
+  }
+}
+
+// 分辨率、缩放、任务栏变了：窗口要重新摆。20 秒一次的刷新里顺便看
+const screenSig = () => [window.screen.width, window.screen.height, window.screen.availWidth, window.screen.availHeight, window.devicePixelRatio].join(',');
+let lastScreen = '';
+function checkScreen() {
+  if (screenSig() === lastScreen) return;
+  lastScreen = screenSig();
+  dockWindow(false);
+}
+
+// ---------- 拖边改宽 ----------
+let sizing = null;
+
+function setWidth(w) {
+  S.settings.width = Math.max(W_MIN, Math.min(W_MAX, Math.round(w)));
+  S.settings.width = widthOf();
+  applyGeo();
+  applyMode();
+}
+
+function gripEnd() {
+  if (!sizing) return;
+  const g = $('grip');
+  try { g.releasePointerCapture(sizing.pid); } catch (err) { /* 已经松开了 */ }
+  sizing = null;
+  root.classList.remove('resizing');
+  holdHit(false);
+  save();
+  render();
+}
+
+function bindGrip() {
+  const g = $('grip');
+  g.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || sizing) return;
+    e.preventDefault();
+    sizing = { pid: e.pointerId, x0: e.clientX, w0: widthOf() };
+    root.classList.add('resizing'); // 跟手：拖的时候不走过渡
+    holdHit(true);                  // 往外拖宽时指针会跑到玻璃外面，不能变成穿透
+    try { g.setPointerCapture(e.pointerId); } catch (err) { /* 抓不到也能拖 */ }
+  });
+  g.addEventListener('pointermove', (e) => {
+    if (!sizing || e.pointerId !== sizing.pid) return;
+    // 靠右时往左拖是变宽，靠左时往右拖是变宽
+    setWidth(sizing.w0 + (e.clientX - sizing.x0) * (atLeft() ? 1 : -1));
+  });
+  g.addEventListener('pointerup', gripEnd);
+  g.addEventListener('pointercancel', gripEnd);
+  g.addEventListener('dblclick', () => { setWidth(W_DEF); save(); render(); });
+  g.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    setWidth(widthOf() + ((e.key === 'ArrowLeft') === atLeft() ? -8 : 8));
+    save();
+    render();
+  });
+  window.addEventListener('blur', gripEnd);
+}
+
+// 量一下小组件背后（它停靠的那个角）的壁纸平均是什么颜色，用来决定文字用浅色还是深色。
 function sampleWall(img, sw, sh, scale) {
   try {
     const W = 64;
@@ -2100,9 +2232,9 @@ function sampleWall(img, sw, sh, scale) {
     const cw = sw / scale;
     const ch = sh / scale;
     g.drawImage(img, (img.naturalWidth - cw) / 2, (img.naturalHeight - ch) / 2, cw, ch, 0, 0, W, H); // 和屏幕上一样的裁切
-    const x0 = Math.max(0, Math.min(W - 1, Math.floor(W * (1 - 400 / sw))));
-    const y1 = Math.max(1, Math.min(H, Math.ceil((H * 900) / sh)));
-    const d = g.getImageData(x0, 0, W - x0, y1).data;
+    const nx = Math.max(1, Math.min(W, Math.ceil(W * ((widthOf() + 28) / sw))));
+    const ny = Math.max(1, Math.min(H, Math.ceil((H * 900) / sh)));
+    const d = g.getImageData(atLeft() ? 0 : W - nx, atBottom() ? H - ny : 0, nx, ny).data;
     const sum = [0, 0, 0];
     for (let i = 0; i < d.length; i += 4) { sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2]; }
     const n = d.length / 4;
@@ -2140,7 +2272,8 @@ async function loadWallpaper() {
   if (invoke) {
     try {
       const bytes = await invoke('wallpaper');
-      showWallpaper(URL.createObjectURL(new Blob([bytes])), window.screen.width, window.screen.height);
+      const size = screenSize();
+      showWallpaper(URL.createObjectURL(new Blob([bytes])), size[0], size[1]);
     } catch (err) {
       console.warn('读不到壁纸，改用实色底', err);
     }
@@ -2509,6 +2642,13 @@ function onAct(act, t) {
     }
     case 'theme': S.settings.theme = t.dataset.v; applySettings(); save(); fillSettings(); return;
     case 'palette': S.settings.palette = t.dataset.v; applySettings(); save(); fillSettings(); return;
+    case 'corner':
+      if (CORNERS.indexOf(t.dataset.v) < 0 || t.dataset.v === cornerOf()) return;
+      S.settings.corner = t.dataset.v;
+      save();
+      fillSettings();
+      dockWindow(false);
+      return;
     case 'layer':
       S.settings.top = t.dataset.v === 'top';
       call('set_layer', { top: S.settings.top }).catch(() => {});
@@ -2570,6 +2710,7 @@ function bind() {
     if (!downBlank || !isBlank(e)) return;
     if (S.pop) { S.pop = null; render(); } else if (S.panel) closePanels();
   });
+  bindGrip();
   // 周视图：拖动
   const wkEl = $('week');
   wkEl.addEventListener('pointerdown', weekDown);
@@ -2791,6 +2932,8 @@ async function start() {
   if (!invoke) root.classList.add('preview');
   layout();
   await load();
+  await dockWindow(true); // 外壳启动时已经按上次的角摆过了，这里拿到几何信息把界面对上
+  lastScreen = screenSig();
   if (invoke) {
     // 数据目录里的 holidays.json 覆盖内置休班表；没有、读不出来、写坏了都当没这回事
     try { Lunar.setHolidays(await invoke('get_holidays')); } catch (err) { /* 用内置的 */ }
@@ -2821,6 +2964,7 @@ async function start() {
     }
     checkReminders();
     render();
+    checkScreen();
   }, 20000);
   checkReminders();
 }

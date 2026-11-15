@@ -1,6 +1,6 @@
 // 模拟外壳和一个假的 iCloud，用来在浏览器里走通同步流程
 (() => {
-  const log = (window.__log = { dav: [], notify: [], rects: 0, calls: [], hold: [] });
+  const log = (window.__log = { dav: [], notify: [], rects: 0, calls: [], hold: [], corner: [] });
   // 测试用的开关：noEtag 上传成功但不回版本号；failPut 接下来几次上传返回 500；delay 每个请求慢多少毫秒
   const opts = (window.__davOpts = { noEtag: false, failPut: 0, delay: 0 });
   const listeners = (window.__listeners = {});
@@ -66,8 +66,10 @@
       if (cmd === 'load_data') return stored;
       if (cmd === 'save_data') { stored = args.json; window.__stored = stored; return null; }
       if (cmd === 'wallpaper') { const r = await fetch(window.__WP); return await r.arrayBuffer(); }
-      if (cmd === 'set_hit_rects') { log.rects = args.rects.length; return null; }
+      if (cmd === 'set_hit_rects') { log.rects = args.rects.length; log.lastRects = args.rects; return null; }
       if (cmd === 'set_hit_hold') { log.hold.push(args.hold); return null; }
+      // 假装外壳摆了窗口：测试给了 __GEO 就按它回几何信息（物理像素），没给就是 null（界面当作窗口就是整块屏幕）
+      if (cmd === 'set_corner') { log.corner.push(args.corner); return window.__GEO ? window.__GEO(args.corner) : null; }
       if (cmd === 'dav') { if (opts.delay) await new Promise((r) => setTimeout(r, opts.delay)); return davMock(args.req); }
       if (cmd === 'get_holidays') return window.__HOLIDAYS || '';
       if (cmd === 'notify') { log.notify.push(args); return null; }

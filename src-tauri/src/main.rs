@@ -1,5 +1,5 @@
 // 今笺 Jinjian：桌面玻璃日程小组件的程序外壳。
-// 负责：把透明窗口贴在屏幕右上角、放在所有窗口之下、只让玻璃区域接收鼠标、
+// 负责：把透明窗口贴在工作区的一侧（默认右边，可换角）、放在所有窗口之下、只让玻璃区域接收鼠标、
 // 托盘菜单、全局快捷键、快速记录窗口、系统通知、开机自启、
 // 本地数据读写、读取系统壁纸，以及替界面向 iCloud 发 CalDAV 请求。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -27,8 +27,9 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
-/// 窗口的逻辑宽度：展开的月视图 768 + 两侧边距。
-const WINDOW_WIDTH: f64 = 820.0;
+/// 窗口的逻辑宽度：详情面板 380 + 间距 16 + 小组件最宽 480 + 两侧边距各 24，再留一点余量。
+/// （展开的月视图 / 周视图是 768 + 边距，比它窄。）屏幕的工作区没这么宽时，以工作区为准。
+const WINDOW_WIDTH: f64 = 928.0;
 /// App 专用密码存在 Windows 凭据管理器里，用这个名字归类。
 const CRED_SERVICE: &str = "Jinjian iCloud";
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -165,6 +166,135 @@ fn wallpaper() -> Result<tauri::ipc::Response, String> {
 }
 
 // ---------- 窗口行为 ----------
+
+/// 窗口摆好以后的几何信息，都是物理像素、[x, y, 宽, 高]。界面靠它把玻璃里的壁纸对到屏幕上。
+#[derive(Serialize, Clone, Copy)]
+struct Geo {
+    /// 主窗口
+    win: [i32; 4],
+    /// 窗口所在的整块显示器（壁纸铺满的范围）
+    mon: [i32; 4],
+    /// 工作区：显示器去掉任务栏的部分
+    work: [i32; 4],
+    scale: f64,
+}
+
+/// 直接问系统要显示器的范围和工作区（任务栏在哪一边、多高，都体现在工作区里）。
+#[cfg(windows)]
+fn system_rects(window: &tauri::WebviewWindow) -> Option<([i32; 4], [i32; 4])> {
+    #[repr(C)]
+    struct Rect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    #[repr(C)]
+    struct MonitorInfo {
+        size: u32,
+        monitor: Rect,
+        work: Rect,
+        flags: u32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn MonitorFromWindow(hwnd: isize, flags: u32) -> isize;
+        fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
+    }
+    /// 窗口不在任何显示器上时，取离它最近的那块。
+    const MONITOR_DEFAULTTONEAREST: u32 = 2;
+
+    let hwnd = main_hwnd(window)?;
+    let zero = || Rect {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let mut info = MonitorInfo {
+        size: std::mem::size_of::<MonitorInfo>() as u32,
+        monitor: zero(),
+        work: zero(),
+        flags: 0,
+    };
+    let ok = unsafe {
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        monitor != 0 && GetMonitorInfoW(monitor, &mut info) != 0
+    };
+    let flat = |r: &Rect| [r.left, r.top, r.right - r.left, r.bottom - r.top];
+    let (mon, work) = (flat(&info.monitor), flat(&info.work));
+    if ok && work[2] > 0 && work[3] > 0 {
+        Some((mon, work))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+fn system_rects(_window: &tauri::WebviewWindow) -> Option<([i32; 4], [i32; 4])> {
+    None
+}
+
+/// 窗口所在显示器的整块范围和工作区。系统那边问不到时，退回窗口框架给的显示器范围（当作没有任务栏）。
+fn screen_rects(window: &tauri::WebviewWindow) -> Option<([i32; 4], [i32; 4])> {
+    if let Some(found) = system_rects(window) {
+        return Some(found);
+    }
+    let monitor = window.current_monitor().ok()??;
+    let all = [
+        monitor.position().x,
+        monitor.position().y,
+        monitor.size().width as i32,
+        monitor.size().height as i32,
+    ];
+    Some((all, all))
+}
+
+/// 把主窗口贴到工作区的左边或右边，高度占满工作区（避开任务栏）。
+/// corner：tr 右上（默认）/ tl 左上 / br 右下 / bl 左下。上下只影响界面在窗口里靠哪头，窗口本身不用动。
+fn place(window: &tauri::WebviewWindow, corner: &str) -> Result<Geo, String> {
+    let (mon, work) = screen_rects(window).ok_or("读不到显示器信息")?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let width = ((WINDOW_WIDTH * scale).round() as i32).min(work[2]).max(1);
+    let height = work[3].max(1);
+    let x = if corner.ends_with('l') {
+        work[0]
+    } else {
+        work[0] + work[2] - width
+    };
+    let y = work[1];
+    window
+        .set_size(PhysicalSize::new(width as u32, height as u32))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    Ok(Geo {
+        win: [x, y, width, height],
+        mon,
+        work,
+        scale,
+    })
+}
+
+/// 界面选了停靠的角（或者发现屏幕变了）：重新摆窗口，把几何信息交回去。
+#[tauri::command]
+fn set_corner(app: AppHandle, corner: String) -> Result<Geo, String> {
+    let window = app.get_webview_window("main").ok_or("找不到主窗口")?;
+    place(&window, &corner)
+}
+
+/// 上次选的停靠角，从数据文件里读（界面还没起来，先按它摆，免得窗口先在右边闪一下再跳到左边）。
+fn saved_corner(app: &AppHandle) -> String {
+    let text = data_dir(app)
+        .ok()
+        .and_then(|dir| fs::read_to_string(dir.join("data.json")).ok())
+        .unwrap_or_default();
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|data| data["settings"]["corner"].as_str().map(str::to_string))
+        .unwrap_or_else(|| "tr".to_string())
+}
 
 #[tauri::command]
 fn set_hit_rects(state: State<'_, Shared>, rects: Vec<[f64; 4]>) {
@@ -402,18 +532,8 @@ fn main() {
         .setup(move |app| {
             let window = app.get_webview_window("main").ok_or("找不到主窗口")?;
 
-            // 贴到当前显示器的右上角，高度占满整块屏幕。
-            if let Some(monitor) = window.current_monitor()? {
-                let size = *monitor.size();
-                let pos = *monitor.position();
-                let scale = window.scale_factor()?;
-                let width = (WINDOW_WIDTH * scale).round() as u32;
-                window.set_size(PhysicalSize::new(width, size.height))?;
-                window.set_position(PhysicalPosition::new(
-                    pos.x + size.width as i32 - width as i32,
-                    pos.y,
-                ))?;
-            }
+            // 贴到工作区的一侧（默认右边），高度占满工作区。摆不成就留在系统给的位置，界面起来后还会再摆一次。
+            let _ = place(&window, &saved_corner(app.handle()));
             window.show()?;
 
             // 全局快捷键：Alt+Q 快速记录，Alt+L 开关鼠标穿透。被别的程序占用就算了。
@@ -572,6 +692,7 @@ fn main() {
             wallpaper,
             set_hit_rects,
             set_hit_hold,
+            set_corner,
             set_locked,
             set_layer,
             set_autostart,

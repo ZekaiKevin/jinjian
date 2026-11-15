@@ -45,6 +45,14 @@
   --wp-size: auto;
   --ox: 0px;
   --oy: 0px;
+  /* 停靠在屏幕哪个角（0.8.1）。--dx / --dy 是靠的那两条边，--sx 是“往屏幕里面”的方向（靠右时内容从右往左长，是 1）。
+     --ex / --ey 是停靠那一侧窗口边到屏幕边的距离（任务栏在那一侧时不是 0），--w 是小组件的宽度。都由 applyGeo() 写。 */
+  --dx: right;
+  --dy: top;
+  --sx: 1;
+  --ex: 0px;
+  --ey: 0px;
+  --w: 372px;
   --curve: cubic-bezier(0.32, 0.72, 0, 1);
   --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
   color-scheme: dark;
@@ -230,7 +238,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   background-image: var(--wp);
   background-repeat: no-repeat;
   background-size: var(--wp-size);
-  background-position: right calc(30px - var(--r) - var(--ox)) top calc(30px - var(--t) - var(--oy));
+  /* --r / --t：这块玻璃离停靠的那两条窗口边多远；再加上窗口边到屏幕边的距离，就是它在屏幕上的位置 */
+  background-position: var(--dx) calc(30px - var(--r) - var(--ex) - var(--ox)) var(--dy) calc(30px - var(--t) - var(--ey) - var(--oy));
   filter: var(--wp-filter);
 }
 .glass::after {
@@ -272,19 +281,19 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.25s var(--ease), transform 0.5s var(--curve), visibility 0s linear 0.5s, top 0.35s var(--curve), right 0.35s var(--curve);
+  transition: opacity 0.25s var(--ease), transform 0.5s var(--curve), visibility 0s linear 0.5s, top 0.35s var(--curve), right 0.35s var(--curve), bottom 0.35s var(--curve), left 0.35s var(--curve);
 }
 .layer.on {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: none;
-  transition: opacity 0.35s var(--ease) 0.08s, transform 0.5s var(--curve), visibility 0s, top 0.35s var(--curve), right 0.35s var(--curve);
+  transition: opacity 0.35s var(--ease) 0.08s, transform 0.5s var(--curve), visibility 0s, top 0.35s var(--curve), right 0.35s var(--curve), bottom 0.35s var(--curve), left 0.35s var(--curve);
 }
-.from-right { transform: translateX(28px); }
+.from-right { transform: translateX(calc(28px * var(--sx))); }
 .from-scale { transform: scale(0.95); }
 .from-up { transform: translateY(10px); }
-.from-edge { transform: translateX(60px); }
+.from-edge { transform: translateX(calc(60px * var(--sx))); }
 
 .rise { animation: rise 0.6s var(--curve) both; }
 .fade { animation: fade 0.3s var(--ease) both; }
@@ -307,12 +316,12 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   position: absolute;
   top: 24px;
   right: 24px;
-  width: 372px;
+  width: var(--w);
   height: var(--shell-h);
   overflow: hidden;
   border-radius: 34px;
   box-shadow: 0 24px 60px var(--shadow);
-  transform-origin: top right;
+  transform-origin: var(--dy) var(--dx);
   transition: width 0.5s var(--curve), height 0.5s var(--curve), opacity 0.25s var(--ease), transform 0.5s var(--curve), visibility 0s;
 }
 #shell.gone {
@@ -324,7 +333,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 }
 #shell > .glass { --r: 24px; --t: 24px; }
 
-#widget { position: absolute; top: 0; right: 0; width: 372px; height: 100%; display: flex; flex-direction: column; gap: 12px; padding: 20px; transform-origin: top right; }
+#widget { position: absolute; top: 0; right: 0; width: var(--w); height: 100%; display: flex; flex-direction: column; gap: 12px; padding: 20px; transform-origin: var(--dy) var(--dx); }
 .views { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; }
 #day { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; overflow-x: hidden; overflow-y: auto; }
 #cal { position: absolute; top: 0; left: 0; right: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -555,7 +564,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 展开的月视图 ---------- */
 
-#big { position: absolute; top: 0; right: 0; width: 768px; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 20px; transform-origin: top right; }
+#big { position: absolute; top: 0; right: 0; width: 768px; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 20px; transform-origin: var(--dy) var(--dx); }
 .big-head { flex-shrink: 0; height: 44px; }
 .big-head .pill { flex: none; padding-left: 16px; padding-right: 16px; }
 .big-head .pill.accent { padding-left: 12px; }
@@ -681,7 +690,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- Ctrl + F 搜索：盖在整块玻璃上 ---------- */
 
-#search { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px; transform-origin: top right; }
+#search { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px; transform-origin: var(--dy) var(--dx); }
 .search-head { flex-shrink: 0; }
 .search-field { flex: 1 1 0; min-width: 0; padding: 0 14px; }
 .search-field svg { flex: none; opacity: 0.8; }
@@ -697,7 +706,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 迷你专注条与贴边胶囊 ---------- */
 
-#compact { position: absolute; top: 0; right: 0; width: 348px; display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 16px; transform-origin: top right; }
+#compact { position: absolute; top: 0; right: 0; width: calc(var(--w) - 24px); display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 16px; transform-origin: var(--dy) var(--dx); }
 #compact .icon { margin: -6px -6px -6px 0; }
 
 #capsule { position: absolute; top: 120px; right: 0; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 16px; border-radius: 24px 0 0 24px; box-shadow: 0 12px 32px var(--shadow); }
@@ -708,9 +717,9 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 详情面板 / 气泡 ---------- */
 
-#panel { position: absolute; z-index: 2; top: 24px; right: 412px; width: 380px; transform-origin: right top; }
+#panel { position: absolute; z-index: 2; top: 24px; right: calc(40px + var(--w)); width: 380px; transform-origin: var(--dx) var(--dy); }
 #panel .zoom { position: relative; border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
-#panel .glass { --r: 412px; --t: 24px; }
+#panel .glass { --r: calc(40px + var(--w)); --t: 24px; }
 #panel-body { position: relative; display: flex; flex-direction: column; gap: 12px; max-height: var(--shell-h); overflow-y: auto; padding: 20px; }
 
 .arrow { display: none; position: absolute; z-index: -1; width: 16px; height: 16px; margin-top: -8px; border-radius: 3px; border: 1px solid var(--edge); background: var(--pop); transform: rotate(45deg); }
@@ -763,8 +772,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 设置 ---------- */
 
-#settings { position: absolute; z-index: 2; top: 24px; right: 412px; width: 340px; border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
-#settings .glass { --r: 412px; --t: 24px; }
+#settings { position: absolute; z-index: 2; top: 24px; right: calc(40px + var(--w)); width: 340px; border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
+#settings .glass { --r: calc(40px + var(--w)); --t: 24px; }
 #settings-body { position: relative; display: flex; flex-direction: column; gap: 14px; max-height: var(--shell-h); overflow-y: auto; padding: 20px; }
 #s-connect .pill { width: 100%; }
 #s-connect .field { flex: none; }
@@ -860,3 +869,35 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 }
 #pop-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pop-head .pill.mini { padding: 0 8px; }
+
+/* ---------- 停靠在别的角（0.8.1）：上面写的都是“右上”，这里只把靠的那条边换过去 ---------- */
+/* 靠左（tl / bl）：贴左边，详情和设置跑到小组件右边，月视图 / 周视图往右展开 */
+[data-corner$="l"] { --dx: left; --sx: -1; }
+[data-corner$="l"] #shell { right: auto; left: 24px; }
+[data-corner$="l"] #widget, [data-corner$="l"] #big, [data-corner$="l"] #compact { right: auto; left: 0; }
+[data-corner$="l"] #capsule { right: auto; left: 0; border-radius: 0 24px 24px 0; }
+[data-corner$="l"] #panel, [data-corner$="l"] #settings { right: auto; left: calc(40px + var(--w)); }
+/* 靠下（bl / br）：贴工作区的下边，变矮、展开都是下边不动 */
+[data-corner^="b"] { --dy: bottom; }
+[data-corner^="b"] #shell, [data-corner^="b"] #panel, [data-corner^="b"] #settings { top: auto; bottom: 24px; }
+[data-corner^="b"] #capsule { top: auto; bottom: 120px; }
+/* 换角的那一下：先藏起来、不走过渡，窗口挪好再显示，免得看到内容在窗口里横穿 */
+.docking #stage { opacity: 0; }
+.docking #stage, .docking #stage * { transition: none !important; }
+#stage { transition: opacity 0.2s var(--ease); }
+
+/* 靠屏幕内侧的那条边：拖它改宽度 */
+#grip { position: absolute; z-index: 3; top: 34px; bottom: 34px; left: 0; width: 10px; cursor: ew-resize; touch-action: none; }
+#grip::after { content: ""; position: absolute; top: 50%; left: 3px; width: 3px; height: 40px; margin-top: -20px; border-radius: 2px; background: rgb(var(--fg) / 0.6); opacity: 0; transition: opacity 0.2s ease; }
+#grip:hover::after, #grip:focus-visible::after, .resizing #grip::after { opacity: 1; }
+#grip:focus-visible { outline: none; }
+[data-corner$="l"] #grip { left: auto; right: 0; }
+[data-corner$="l"] #grip::after { left: auto; right: 3px; }
+.resizing #shell, .resizing #panel, .resizing #settings { transition: none; }
+.resizing, .resizing * { cursor: ew-resize !important; }
+
+/* 小组件拖窄了（比默认的 372 窄）：头上那一排图标放不下，收紧一点，免得最右边的被玻璃裁掉 */
+.narrow #widget > header { gap: 4px; margin: 0 -6px; }
+.narrow #widget > header .date-btn { gap: 6px; }
+.narrow #widget > header .icon:not(.mini) { width: 32px; height: 32px; }
+.narrow #widget > header .icon.mini { width: 24px; }

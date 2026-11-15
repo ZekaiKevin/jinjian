@@ -192,6 +192,19 @@
 
       <div class="block">
         <div class="row gap6">
+          <h2>停靠位置</h2>
+          <button type="button" class="help" data-tip="贴在屏幕的哪个角，会避开任务栏。&#10;拖小组件靠屏幕内侧的那条边可以改宽度，双击那条边恢复默认。" aria-label="说明">?</button>
+        </div>
+        <div class="seg" id="s-corner">
+          <button type="button" class="tap" data-act="corner" data-v="tl">左上</button>
+          <button type="button" class="tap" data-act="corner" data-v="tr">右上</button>
+          <button type="button" class="tap" data-act="corner" data-v="bl">左下</button>
+          <button type="button" class="tap" data-act="corner" data-v="br">右下</button>
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="row gap6">
           <button id="s-fold" type="button" class="fold tap" data-act="fold-sync" aria-expanded="false" aria-controls="s-sync">
             <span class="h2">iCloud 日历</span>
             <span id="s-fold-meta" class="meta grow"></span>
@@ -228,6 +241,7 @@
 
   <div id="shell" class="rise">
     <div class="glass"></div>
+    <div id="grip" role="separator" aria-orientation="vertical" aria-label="小组件宽度" tabindex="0"></div>
 
     <!-- 小组件 -->
     <main id="widget" class="layer from-scale on">
