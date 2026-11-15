@@ -114,7 +114,7 @@ fn flush_done() {
 }
 
 /// 从托盘退出：先让界面把还没写盘的改动写完（最多等 1.5 秒），再真正退出。
-fn quit(app: &AppHandle) {
+fn quit_app(app: &AppHandle) {
     if QUITTING.swap(true, Ordering::SeqCst) {
         return; // 已经在退了
     }
@@ -421,7 +421,7 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             tray.on_menu_event(move |app, event| match event.id.as_ref() {
-                "quit" => quit(app),
+                "quit" => quit_app(app),
                 "capture" => show_capture(app),
                 "toggle_lock" => toggle_lock(app, &for_tray),
                 _ => {}
