@@ -52,6 +52,46 @@
           <label for="p-due">截止</label>
           <input id="p-due" class="field" type="time">
         </div>
+        <div id="p-rep-row" class="frow">
+          <label for="p-repeat">重复</label>
+          <div class="row gap8">
+            <select id="p-repeat" class="field">
+              <option value="">不重复</option>
+              <option value="DAILY">每天</option>
+              <option value="WEEKLY">每周</option>
+              <option value="MONTHLY">每月</option>
+              <option value="YEARLY">每年</option>
+              <option value="LUNAR">每年（农历）</option>
+            </select>
+            <span id="p-local" class="local-ico" role="img" aria-label="只存本机" data-tip="只存本机，不传到 iCloud" hidden>
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="14" height="9.5" rx="1.8"/><path d="M7.5 16.5h5M10 13.5v3"/></svg>
+            </span>
+          </div>
+        </div>
+        <div id="p-wk-row" class="frow" hidden>
+          <span aria-hidden="true"></span>
+          <div id="p-wk" class="wk" role="group" aria-label="每周哪几天">
+            <button type="button" class="tap" data-act="p-wk" data-d="0" aria-pressed="false" aria-label="周日">日</button>
+            <button type="button" class="tap" data-act="p-wk" data-d="1" aria-pressed="false" aria-label="周一">一</button>
+            <button type="button" class="tap" data-act="p-wk" data-d="2" aria-pressed="false" aria-label="周二">二</button>
+            <button type="button" class="tap" data-act="p-wk" data-d="3" aria-pressed="false" aria-label="周三">三</button>
+            <button type="button" class="tap" data-act="p-wk" data-d="4" aria-pressed="false" aria-label="周四">四</button>
+            <button type="button" class="tap" data-act="p-wk" data-d="5" aria-pressed="false" aria-label="周五">五</button>
+            <button type="button" class="tap" data-act="p-wk" data-d="6" aria-pressed="false" aria-label="周六">六</button>
+          </div>
+        </div>
+        <div id="p-end-row" class="frow" hidden>
+          <label for="p-rend">结束</label>
+          <div class="row gap8">
+            <select id="p-rend" class="field">
+              <option value="never">永不</option>
+              <option value="until">到某天</option>
+              <option value="count">次数</option>
+            </select>
+            <input id="p-until" class="field" type="date" aria-label="结束日期" hidden>
+            <input id="p-rcount" class="field" type="number" min="1" max="999" step="1" inputmode="numeric" aria-label="重复次数" hidden>
+          </div>
+        </div>
         <div class="frow">
           <label for="p-place">地点</label>
           <input id="p-place" class="field" type="text" autocomplete="off">
@@ -89,6 +129,12 @@
 
         <button id="p-del" type="button" class="del tap" data-act="p-del">删除</button>
       </section>
+    </div>
+    <!-- 改 / 删重复条目时问范围 -->
+    <div id="scope" class="scope" role="group" aria-label="修改范围" hidden>
+      <button type="button" class="tap" data-act="scope" data-v="one">仅此次</button>
+      <button type="button" class="tap" data-act="scope" data-v="future">此次及以后</button>
+      <button type="button" class="tap" data-act="scope" data-v="all">全部</button>
     </div>
   </div>
 
@@ -414,6 +460,7 @@
 
 <script src="ics.js"></script>
 <script src="lunar.js"></script>
+<script src="recur.js"></script>
 <script src="nlp.js"></script>
 <script src="search.js"></script>
 <script src="countdown.js"></script>

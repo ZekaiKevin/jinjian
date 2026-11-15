@@ -498,7 +498,7 @@
     return all.map(fold).join('\r\n') + '\r\n';
   }
 
-  const api = { parse: parse, expand: expand, build: build, patch: patch, toDate: toDate, unfold: unfold };
+  const api = { parse: parse, expand: expand, build: build, patch: patch, toDate: toDate, unfold: unfold, parseRRule: parseRRule };
   global.ICS = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

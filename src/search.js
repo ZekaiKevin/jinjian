@@ -107,7 +107,7 @@
       const dist = Math.abs(dayNo(it.date) - base);
       found.push({
         inTitle: inTitle, dist: Number.isNaN(dist) ? Infinity : dist, index: index,
-        series: it.recurring || it.parts ? 'S|' + str(it.href) : '',
+        series: it.masterId ? 'L|' + str(it.masterId) : it.recurring || it.parts ? 'S|' + str(it.href) : '',
         hit: {
           id: it.id, kind: it.kind, title: str(it.title), date: str(it.date), start: str(it.start), end: str(it.end), allDay: !!it.allDay,
           due: str(it.due), done: !!it.done, star: !!it.star, place: str(it.place), color: str(it.color), remote: !!it.remote,
@@ -122,7 +122,7 @@
       || (a.hit.start < b.hit.start ? -1 : a.hit.start > b.hit.start ? 1 : 0)
       || (a.index - b.index));
 
-    // 每周的课、跨天的日程是同一件事的很多场，只留排在最前（离今天最近）的那一场
+    // 每周的课、跨天的日程、本机的重复条目是同一件事的很多场，只留排在最前（离今天最近）的那一场
     const seen = {};
     const unique = found.filter((f) => {
       if (!f.series) return true;

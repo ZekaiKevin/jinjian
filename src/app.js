@@ -129,16 +129,43 @@ const S = {
   search: false,    // Ctrl + F 搜索层是否打开
   searchBack: null, // 打开搜索前的状态：迷你条 / 胶囊、当时的焦点，Esc 退回去用
   hold: {},         // 刚勾掉的待办先在原位停一下再沉底：id → 到期时间
+  ask: null,        // 改 / 删重复条目时正在问范围：{ mode: 'edit' | 'del', id, patch, anchor }
+  scopeMem: null,   // 这一场已经选过范围了：{ id, scope }，接着改就不再问
 };
 let R = [];           // 同步来的日程展开后的具体场次
+let L = [];           // 本机重复条目展开后的场次（只展开画面上用得到的那些天），主条目本身不直接显示
 let saveTimer = null;
 const pushTimers = {};
 const pushing = {};   // 正在上传的 iCloud 条目，避免同一条同时传两次
 const retries = {};   // 上传失败了几次，决定隔多久再试
 const retryTimers = {};
 
-const allItems = () => S.items.concat(R);
-const find = (id) => S.items.find((x) => x.id === id) || R.find((x) => x.id === id) || null;
+const plainItems = () => S.items.filter((it) => !Recur.isRepeating(it));
+const allItems = () => plainItems().concat(L, R);
+const masterOf = (it) => (it && it.masterId ? S.items.find((x) => x.id === it.masterId) || null : it);
+const find = (id) => S.items.find((x) => x.id === id && !Recur.isRepeating(x)) || R.find((x) => x.id === id) || Recur.get(S.items, id) || null;
+
+// 本机重复条目要展开的日子：今天前后（和 iCloud 一样，前 62 天到后 400 天）、正在看的月份、正在看的那天
+function rebuildLocal() {
+  const ranges = [];
+  const add = (a, b) => ranges.push([a, b]);
+  const t = today();
+  add(Recur.addDays(t, -62), Recur.addDays(t, 400));
+  if (S.vm) {
+    const first = new Date(S.vm.y, S.vm.m, 1);
+    add(iso(new Date(S.vm.y, S.vm.m, 1 - first.getDay())), iso(new Date(S.vm.y, S.vm.m, 1 - first.getDay() + 41)));
+  }
+  add(S.date, S.date);
+  ranges.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const merged = [];
+  ranges.forEach((r) => {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= Recur.addDays(last[1], 1)) { if (r[1] > last[1]) last[1] = r[1]; } else merged.push(r.slice());
+  });
+  const seen = {};
+  L = [];
+  merged.forEach((r) => Recur.expand(S.items, r[0], r[1]).forEach((o) => { if (!seen[o.id]) { seen[o.id] = true; L.push(o); } }));
+}
 
 async function load() {
   let raw = '';
@@ -150,7 +177,7 @@ async function load() {
   if (!raw) return;
   try {
     const d = JSON.parse(raw);
-    S.items = Array.isArray(d.items) ? d.items : [];
+    S.items = Recur.normalize(Array.isArray(d.items) ? d.items : []);
     S.items.forEach((it) => { delete it.uploading; });
     S.note = typeof d.note === 'string' ? d.note : '';
     S.extras = d.extras && typeof d.extras === 'object' ? d.extras : {};
@@ -200,7 +227,8 @@ function rollOver() {
   const t = today();
   let moved = false;
   S.items.forEach((it) => {
-    if (it.kind === 'todo' && !it.done && it.date < t) { it.date = t; moved = true; }
+    // 重复待办每一场单独算，没做完的那一场不往后带
+    if (it.kind === 'todo' && !it.done && it.date < t && !Recur.isRepeating(it)) { it.date = t; moved = true; }
   });
   if (moved) save();
 }
@@ -368,7 +396,7 @@ async function pushRes(href) {
 async function uploadPending() {
   const sync = S.settings.sync;
   if (!sync.on || !sync.user) return;
-  const list = S.items.filter((it) => it.kind === 'event' && it.cal && (it.title || '').trim() && it.id !== S.sel && !it.uploading);
+  const list = S.items.filter((it) => it.kind === 'event' && it.cal && (it.title || '').trim() && it.id !== S.sel && !it.uploading && !Recur.isRepeating(it));
   if (!list.length) return;
   const sig = (x) => JSON.stringify([x.title, x.date, x.start, x.end, x.allDay, x.place, x.notes, x.remind]);
   for (const it of list) {
@@ -420,8 +448,20 @@ async function uploadPending() {
 // 重复日程、跨天日程只能在 Apple 日历里改
 const isLocked = (it) => !!it.remote && (!!it.recurring || !!it.parts);
 
-function updateItem(it, p) {
+// scope 只对本机重复条目的某一场有用：'one' / 'future' / 'all'（完成状态、重点、倒数日、类型不看范围）
+function updateItem(it, p, scope) {
   const rest = Object.assign({}, p);
+  if (it.masterId) {
+    const r = Recur.edit(S.items, it.id, rest, scope || 'one', () => uid(it.kind === 'event' ? 'e' : 't'));
+    S.items = r.items;
+    Object.assign(it, rest); // 手里这份也跟上，下次 find 会重新拼
+    if (S.sel === it.id && r.sel !== it.id) {
+      S.sel = r.sel;
+      if (S.scopeMem) S.scopeMem.id = r.sel;
+    }
+    save();
+    return;
+  }
   if (it.remote) {
     if ('subs' in rest) {
       S.extras[it.id] = Object.assign({}, S.extras[it.id], { subs: rest.subs });
@@ -502,7 +542,8 @@ function addItem(kind, fields, open) {
 }
 
 function leaveItem(id) {
-  const it = S.items.find((x) => x.id === id);
+  const v = Recur.parseVid(id);
+  const it = S.items.find((x) => x.id === id) || (v ? S.items.find((x) => x.id === v.masterId) : null);
   if (!it || !it.draft) return;
   const empty = !(it.title || '').trim() && !(it.place || '').trim() && !(it.notes || '').trim() && !(it.subs && it.subs.length);
   if (empty) S.items = S.items.filter((x) => x !== it);
@@ -513,6 +554,7 @@ function leaveItem(id) {
 function setSel(id) {
   const prev = S.sel;
   S.sel = id;
+  if (prev !== id) { S.ask = null; S.scopeMem = null; }
   if (prev && prev !== id) {
     leaveItem(prev);
     setTimeout(uploadPending, 0);
@@ -713,7 +755,7 @@ function renderDay(map, info) {
 
   let overdue = '';
   if (isToday && !S.settings.carry) {
-    const n = S.items.filter((x) => x.kind === 'todo' && !x.done && x.date < S.date).length;
+    const n = plainItems().filter((x) => x.kind === 'todo' && !x.done && x.date < S.date).length;
     if (n) overdue = '<div class="overdue"><span class="grow">' + n + ' 项之前没做完</span><button type="button" class="pill mini tap" data-act="carry-now">移到今天</button></div>';
   }
   setHtml($('todos'), overdue + todos.map((t) => {
@@ -741,7 +783,10 @@ function renderDay(map, info) {
 
 // 顶部倒数日：最近的三个，“距 X 还有 N 天”。没有就整条隐藏，不占位置也不写字。
 function renderCountdowns() {
-  const list = Countdown.pick(allItems(), today());
+  // 重复的只看下一场（待办这一场做完了就看再下一场）
+  const t = today();
+  const next = S.items.filter((m) => m.countdown && Recur.isRepeating(m)).map((m) => Recur.next(m, t, m.kind === 'todo')).filter(Boolean);
+  const list = Countdown.pick(plainItems().concat(R, next), t);
   $('countdowns').hidden = list.length === 0;
   setHtml($('countdowns'), list.map((c) => '<button type="button" class="cd tap" data-act="cd" data-id="' + esc(c.id) + '" aria-label="' + esc(c.label) + '">'
     + (c.lead ? '<span class="cd-lead">' + esc(c.lead) + '</span>' : '')
@@ -921,7 +966,9 @@ function positionPanel() {
 
 function render() {
   if (!S.vm) { const d = fromIso(S.date); S.vm = { y: d.getFullYear(), m: d.getMonth() }; }
+  rebuildLocal();
   if (S.sel && !find(S.sel)) { S.sel = null; if (S.panel === 'detail') S.panel = ''; }
+  if (S.ask && (S.ask.id !== S.sel || S.panel !== 'detail')) S.ask = null;
   const map = byDate();
   const info = nowInfo(map);
   const month = monthDays();
@@ -940,6 +987,7 @@ function render() {
   $('settings').classList.toggle('on', S.panel === 'settings');
   $('settings').setAttribute('aria-hidden', S.panel === 'settings' ? 'false' : 'true');
   if (detail) positionPanel();
+  renderScope();
   S.justDone = null;
   sendRectsSoon();
 }
@@ -991,7 +1039,12 @@ function renderSearchList() {
 }
 
 function runSearch() {
-  const r = Search.run({ items: allItems(), note: S.note, query: $('search-input').value, today: today() });
+  // 重复条目：展开过的那些场次，再加上离今天最近的一场（窗口外的老系列也搜得到）；search.js 按系列只留一条
+  const t = today();
+  const have = {};
+  L.forEach((o) => { have[o.id] = true; });
+  const extra = S.items.filter(Recur.isRepeating).map((m) => Recur.nearest(m, t)).filter((o) => o && !have[o.id]);
+  const r = Search.run({ items: allItems().concat(extra), note: S.note, query: $('search-input').value, today: t });
   searchHits = r.items.map((h) => ({ note: false, h: h })).concat(r.note ? [{ note: true, h: r.note }] : []);
   searchIdx = 0;
   $('search-list').scrollTop = 0;
@@ -1099,7 +1152,8 @@ function fillPanel(it) {
   else kind.dataset.tip = isTodo ? '点一下改成日程' : '点一下改成待办';
   $('p-cal').textContent = it.remote ? it.calName : '';
   const pick = $('p-cal-pick');
-  pick.hidden = !(!it.remote && !isTodo && sync.on && sync.cals.length);
+  const rep = Recur.isRepeating(masterOf(it) || it);
+  pick.hidden = !(!it.remote && !isTodo && sync.on && sync.cals.length) || rep;
   if (!pick.hidden) {
     pick.innerHTML = '<option value="">仅本机</option>' + sync.cals.map((c) => '<option value="' + esc(c.href) + '">' + esc(c.name) + '</option>').join('');
     pick.value = it.cal || '';
@@ -1138,7 +1192,144 @@ function fillPanel(it) {
   remind.disabled = locked;
   $('p-done').setAttribute('aria-pressed', it.done ? 'true' : 'false');
   $('p-star').setAttribute('aria-pressed', it.star ? 'true' : 'false');
+  fillRepeat(it);
   renderSubs(it, null);
+}
+
+// 重复：只有本机的条目能设（iCloud 的重复日程照旧在 Apple 日历里改）
+function fillRepeat(it) {
+  const own = !it.remote;
+  $('p-rep-row').hidden = !own;
+  const f = own ? Recur.toForm(masterOf(it) || it) : Recur.toForm(null);
+  $('p-repeat').value = f.freq;
+  $('p-wk-row').hidden = !own || f.freq !== 'WEEKLY';
+  $('p-wk').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', f.byday.indexOf(Number(b.dataset.d)) >= 0 ? 'true' : 'false'));
+  $('p-end-row').hidden = !own || !f.freq;
+  $('p-rend').value = f.end;
+  $('p-until').hidden = f.end !== 'until';
+  $('p-until').value = f.until || '';
+  $('p-rcount').hidden = f.end !== 'count';
+  $('p-rcount').value = f.count ? String(f.count) : '';
+  $('p-local').hidden = !(own && f.freq && it.kind === 'event' && S.settings.sync.on);
+}
+
+// 详情里正在显示的样子：还在问范围时，把还没定下来的改动叠上去
+function selView() {
+  const it = find(S.sel);
+  if (!it || !S.ask || S.ask.mode !== 'edit' || S.ask.id !== it.id) return it;
+  return Object.assign({}, it, S.ask.patch);
+}
+
+// 详情里的改动都走这里：重复条目的某一场第一次改时先问范围，问完再写。写进去了返回 true。
+function change(it, p, anchor) {
+  if (it.masterId && !(S.scopeMem && S.scopeMem.id === it.id)) {
+    if (S.ask && S.ask.mode === 'edit' && S.ask.id === it.id) Object.assign(S.ask.patch, p);
+    else S.ask = { mode: 'edit', id: it.id, patch: Object.assign({}, p), anchor: anchor || null };
+    renderScope();
+    return false;
+  }
+  updateItem(it, p, it.masterId ? S.scopeMem.scope : undefined);
+  return true;
+}
+
+// 问范围的小气泡：贴在刚改的那一项下面（放不下就放上面），不说明、不遮详情的其余部分
+function renderScope() {
+  const box = $('scope');
+  const a = S.ask;
+  const show = !!a && S.panel === 'detail' && $('panel').classList.contains('on');
+  if (!show) {
+    if (!box.hidden) { box.hidden = true; sendRectsSoon(); }
+    return;
+  }
+  const wasHidden = box.hidden;
+  box.hidden = false;
+  box.classList.toggle('del', a.mode === 'del');
+  box.setAttribute('aria-label', a.mode === 'del' ? '删除哪几次' : '修改哪几次');
+  const panel = $('panel');
+  const pr = panel.getBoundingClientRect();
+  const anchor = a.anchor && a.anchor.isConnected && a.anchor.offsetParent !== null ? a.anchor : $('p-title');
+  const ar = anchor.getBoundingClientRect();
+  const w = box.offsetWidth;
+  const h = box.offsetHeight;
+  const sx = pr.width / (panel.offsetWidth || pr.width) || 1; // 详情正在缩放的话按比例换回去
+  let top = (ar.bottom - pr.top) / sx + 6;
+  if (top + h > panel.offsetHeight - 6 && (ar.top - pr.top) / sx - h - 6 >= 6) top = (ar.top - pr.top) / sx - h - 6;
+  const left = Math.max(8, Math.min(panel.offsetWidth - w - 8, (ar.left - pr.left) / sx));
+  box.style.top = Math.round(top) + 'px';
+  box.style.left = Math.round(left) + 'px';
+  if (wasHidden) sendRectsSoon();
+}
+
+function resolveAsk(scope) {
+  const a = S.ask;
+  S.ask = null;
+  const it = a ? find(a.id) : null;
+  if (!a || !it) { render(); return; }
+  if (a.mode === 'del') { deleteOcc(it, scope); return; }
+  S.scopeMem = { id: it.id, scope: scope };
+  updateItem(it, a.patch, scope);
+  if (scope === 'future') S.scopeMem.scope = 'all'; // 拆出来的新系列：之后再改就是改它全部
+  const now = find(S.sel);
+  if (now) fillPanel(now);
+  render();
+  const back = a.anchor;
+  if (back && back.isConnected && back.offsetParent !== null && /^(INPUT|TEXTAREA|SELECT)$/.test(back.tagName)) back.focus();
+}
+
+// 没选范围就关掉 / 按 Esc：刚才的改动不算
+function cancelAsk() {
+  if (!S.ask) return;
+  S.ask = null;
+  const it = find(S.sel);
+  if (it) fillPanel(it);
+  render();
+}
+
+// 删重复条目的某一场；本机的都给 4 秒撤销
+function deleteOcc(it, scope) {
+  const m = masterOf(it);
+  if (!m) return;
+  const index = S.items.indexOf(m);
+  const snap = JSON.parse(JSON.stringify(m));
+  setSel(null);
+  S.panel = '';
+  S.items = Recur.remove(S.items, it.id, scope).items;
+  save();
+  showToast('已删除「' + (it.title || '未命名') + '」', '撤销', () => {
+    const i = S.items.findIndex((x) => x.id === snap.id);
+    if (i >= 0) S.items[i] = snap; else S.items.splice(Math.min(index, S.items.length), 0, snap);
+    save();
+    render();
+  });
+  render();
+}
+
+// 改重复规则：整个系列的事，不问范围
+function applyRule(form) {
+  const it = find(S.sel);
+  if (!it || it.remote) return;
+  const m = masterOf(it);
+  const snap = m ? JSON.stringify(m) : '';
+  const r = Recur.setRule(S.items, it.id, form);
+  if (m && Recur.isRepeating(m) && !Recur.first(m)) {
+    // 结束日期早于开始、次数让它一场都不剩：不接受，退回原样
+    Object.keys(m).forEach((k) => delete m[k]);
+    Object.assign(m, JSON.parse(snap));
+    fillPanel(it);
+    return;
+  }
+  if (m && m.lunar && m.cal) delete m.cal; // 农历重复传不上 iCloud
+  if (r.sel !== S.sel) { S.sel = r.sel; S.scopeMem = null; S.ask = null; }
+  save();
+  render();
+  const now = find(S.sel);
+  if (now) fillPanel(now);
+}
+
+function repeatForm() {
+  const it = find(S.sel);
+  const f = Recur.toForm(it ? masterOf(it) || it : null);
+  return f;
 }
 
 function openDetail(id, focusTitle) {
@@ -1357,6 +1548,7 @@ function sendRects() {
   if ($('panel').classList.contains('on')) add($('panel'));
   if ($('settings').classList.contains('on')) add($('settings'));
   if ($('toast').classList.contains('on')) add($('toast'));
+  if (!$('scope').hidden) add($('scope'));
   invoke('set_hit_rects', { rects: rects }).catch(() => {});
 }
 
@@ -1574,7 +1766,7 @@ function onAct(act, t) {
     case 'add-todo': S.settings.fold.td = false; addItem('todo', { date: S.date }, true); return;
     case 'carry-now': {
       const t0 = today();
-      S.items.forEach((x) => { if (x.kind === 'todo' && !x.done && x.date < t0) x.date = t0; });
+      plainItems().forEach((x) => { if (x.kind === 'todo' && !x.done && x.date < t0) x.date = t0; });
       save();
       replay($('todos'), 'swap');
       break;
@@ -1648,29 +1840,33 @@ function onAct(act, t) {
     case 'pop-add': addItem('event', { date: S.pop || S.date }, true); return;
     case 'pop-add-todo': addItem('todo', { date: S.pop || S.date }, true); return;
     case 'p-allday': {
-      if (!cur || isLocked(cur)) return;
-      const on = !cur.allDay;
+      const v = selView();
+      if (!v || isLocked(v)) return;
+      const on = !v.allDay;
       const p = { allDay: on };
-      if (!on && !cur.start) { p.start = '09:00'; p.end = '10:00'; }
-      updateItem(cur, p);
-      fillPanel(cur);
+      if (!on && !v.start) { p.start = '09:00'; p.end = '10:00'; }
+      change(v, p, t);
+      fillPanel(selView());
       break;
     }
     case 'p-kind': {
-      // 本机的日程和待办互相转换
+      // 本机的日程和待办互相转换；重复条目是整个系列一起换
       if (!cur || cur.remote) return;
-      if (cur.kind === 'event') {
-        Object.assign(cur, { kind: 'todo', due: cur.allDay ? '' : (cur.start || ''), done: false, star: false });
-        delete cur.cal;
+      S.ask = null;
+      const m = masterOf(cur);
+      if (!m) return;
+      if (m.kind === 'event') {
+        Object.assign(m, { kind: 'todo', due: m.allDay ? '' : (m.start || ''), done: false, star: false });
+        delete m.cal;
       } else {
-        const st = cur.due || (cur.date === today() ? fromMin(Math.min(23 * 60, Math.ceil((nowMin() + 1) / 30) * 30)) : '09:00');
-        Object.assign(cur, { kind: 'event', start: st, end: fromMin(Math.min(23 * 60 + 59, toMin(st) + 60)), allDay: false, remind: cur.remind && cur.remind !== 'none' ? cur.remind : '10' });
+        const st = m.due || (cur.date === today() ? fromMin(Math.min(23 * 60, Math.ceil((nowMin() + 1) / 30) * 30)) : '09:00');
+        Object.assign(m, { kind: 'event', start: st, end: fromMin(Math.min(23 * 60 + 59, toMin(st) + 60)), allDay: false, remind: m.remind && m.remind !== 'none' ? m.remind : '10' });
         const sync = S.settings.sync;
-        if (sync.on && sync.target) cur.cal = sync.target;
+        if (sync.on && sync.target && !m.lunar) m.cal = sync.target;
       }
       // 只是换了类型、什么都没写，关掉时照样不留下“未命名”
       save();
-      fillPanel(cur);
+      fillPanel(find(S.sel) || cur);
       replay($('panel-body'), 'fade');
       break;
     }
@@ -1693,6 +1889,13 @@ function onAct(act, t) {
     case 'cd': jumpTo(id); return;
     case 'p-del': {
       if (!cur) return;
+      if (cur.masterId) {
+        // 重复条目：问删哪几场
+        if (S.ask && S.ask.mode === 'del') { S.ask = null; renderScope(); return; }
+        S.ask = { mode: 'del', id: cur.id, patch: null, anchor: t };
+        renderScope();
+        return;
+      }
       if (cur.remote) {
         // iCloud 上的日程删了就没了，要再点一次确认
         if (!t.classList.contains('confirm')) {
@@ -1725,18 +1928,28 @@ function onAct(act, t) {
       break;
     }
     case 'sub-toggle': case 'sub-remove': {
-      if (!cur) return;
+      const v = selView();
+      if (!v) return;
       let fresh = null;
       const subs = act === 'sub-remove'
-        ? (cur.subs || []).filter((s) => s.id !== id)
-        : (cur.subs || []).map((s) => {
+        ? (v.subs || []).filter((s) => s.id !== id)
+        : (v.subs || []).map((s) => {
           if (s.id !== id) return s;
           if (!s.done) fresh = s.id;
           return Object.assign({}, s, { done: !s.done });
         });
-      updateItem(cur, { subs: subs });
-      renderSubs(cur, fresh);
+      change(v, { subs: subs }, $('p-subs'));
+      renderSubs(selView(), fresh);
       break;
+    }
+    case 'scope': resolveAsk(t.dataset.v); return;
+    case 'p-wk': {
+      const f = repeatForm();
+      const d = Number(t.dataset.d);
+      const i = f.byday.indexOf(d);
+      if (i >= 0) { if (f.byday.length > 1) f.byday.splice(i, 1); } else f.byday.push(d);
+      applyRule(f);
+      return;
     }
     case 'theme': S.settings.theme = t.dataset.v; applySettings(); save(); fillSettings(); return;
     case 'palette': S.settings.palette = t.dataset.v; applySettings(); save(); fillSettings(); return;
@@ -1813,6 +2026,7 @@ function bind() {
     // Ctrl + F：只在小组件有焦点时生效，不注册系统级快捷键；顺便挡掉浏览器自己的查找条
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); openSearch(); return; }
     if (e.key !== 'Escape') return;
+    if (S.ask) { cancelAsk(); return; }
     if (S.search) { closeSearch(true); return; }
     if (S.pop) { S.pop = null; render(); return; }
     if (S.panel) { closePanels(); return; }
@@ -1860,17 +2074,16 @@ function bind() {
 
   // 详情里的输入框
   const field = (id, key, ev) => $(id).addEventListener(ev || 'input', (e) => {
-    const it = find(S.sel);
+    const it = selView();
     if (!it) return;
     if (key === 'date' && !e.target.value) return;
-    updateItem(it, { [key]: e.target.value });
-    render();
+    if (change(it, { [key]: e.target.value }, e.target)) render();
   });
   field('p-title', 'title');
   field('p-end', 'end');
   // 改开始时间时整段一起挪，时长不变
   $('p-start').addEventListener('input', (e) => {
-    const it = find(S.sel);
+    const it = selView();
     if (!it || !e.target.value) return;
     const s0 = toMin(it.start);
     const e0 = toMin(it.end);
@@ -1881,8 +2094,7 @@ function bind() {
       p.end = fromMin(Math.min(23 * 60 + 59, s1 + dur));
       $('p-end').value = p.end;
     }
-    updateItem(it, p);
-    render();
+    if (change(it, p, e.target)) render();
   });
   field('p-due', 'due');
   field('p-place', 'place');
@@ -1892,23 +2104,58 @@ function bind() {
 
   $('p-subform').addEventListener('submit', (e) => {
     e.preventDefault();
-    const it = find(S.sel);
+    const it = selView();
     const input = $('p-sub');
     const value = input.value.trim();
     if (!it || !value) return;
     input.value = '';
-    updateItem(it, { subs: (it.subs || []).concat([{ id: uid('s'), text: value, done: false }]) });
-    renderSubs(it, null);
+    change(it, { subs: (it.subs || []).concat([{ id: uid('s'), text: value, done: false }]) }, input);
+    renderSubs(selView(), null);
     render();
   });
 
   // 单行输入框里回车：保存并关掉详情
-  ['p-title', 'p-place', 'p-date', 'p-start', 'p-end', 'p-due'].forEach((id) => $(id).addEventListener('keydown', (e) => {
+  ['p-title', 'p-place', 'p-date', 'p-start', 'p-end', 'p-due', 'p-until', 'p-rcount'].forEach((id) => $(id).addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
+    // 还没选改哪几次：回车先去选，不关详情
+    if (S.ask) { const b = $('scope').querySelector('button'); if (b) b.focus(); return; }
+    if (id === 'p-rcount') e.target.dispatchEvent(new Event('change'));
     e.target.blur();
     closePanels();
   }));
+
+  // 重复规则
+  $('p-repeat').addEventListener('change', (e) => {
+    const f = repeatForm();
+    f.freq = e.target.value;
+    if (f.freq !== 'WEEKLY') f.byday = [];
+    applyRule(f);
+  });
+  $('p-rend').addEventListener('change', (e) => {
+    const f = repeatForm();
+    const it = find(S.sel);
+    f.end = e.target.value;
+    if (f.end === 'until' && !f.until) f.until = Recur.addDays((it && it.date) || S.date, 90);
+    if (f.end === 'count' && !f.count) f.count = 10;
+    applyRule(f);
+  });
+  $('p-until').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    const f = repeatForm();
+    f.end = 'until';
+    f.until = e.target.value;
+    applyRule(f);
+  });
+  $('p-rcount').addEventListener('change', (e) => {
+    const n1 = Math.floor(Number(e.target.value));
+    if (!(n1 >= 1)) { const it = find(S.sel); if (it) fillRepeat(it); return; }
+    const f = repeatForm();
+    f.end = 'count';
+    f.count = Math.min(999, n1);
+    applyRule(f);
+  });
+  $('panel-body').addEventListener('scroll', () => { if (S.ask) renderScope(); });
 
   $('p-cal-pick').addEventListener('change', (e) => {
     const it = find(S.sel);
@@ -1921,10 +2168,9 @@ function bind() {
   // 子任务的文字直接改
   $('p-subs').addEventListener('input', (e) => {
     const input = e.target.closest('.sub-name');
-    const it = find(S.sel);
+    const it = selView();
     if (!input || !it) return;
-    updateItem(it, { subs: (it.subs || []).map((x) => (x.id === input.dataset.sub ? Object.assign({}, x, { text: input.value }) : x)) });
-    render();
+    if (change(it, { subs: (it.subs || []).map((x) => (x.id === input.dataset.sub ? Object.assign({}, x, { text: input.value }) : x)) }, input)) render();
   });
   $('p-subs').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && e.target.closest('.sub-name')) { e.preventDefault(); e.target.blur(); }

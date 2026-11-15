@@ -373,6 +373,22 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .cd-lead, .cd-tail { flex: none; white-space: pre; color: rgb(var(--fg) / 0.84); font-weight: 500; }
 .cd-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #p-count { flex: none; padding: 0 16px; }
+/* ---------- 重复：每周几的小圆钮、只存本机的小图标、问范围的小气泡 ---------- */
+
+.wk { display: flex; gap: 4px; min-width: 0; }
+.wk button { flex: 1 1 0; min-width: 0; height: 28px; border-radius: 14px; border: 1px solid var(--field-edge); background: var(--field); font-size: 12px; }
+.wk button[aria-pressed="true"] { border-color: transparent; background: var(--solid); color: var(--on-solid); font-weight: 700; text-shadow: none; }
+#p-rend { flex: 0 1 auto; width: auto; }
+#p-rcount { flex: none; width: 64px; }
+.local-ico { flex: none; display: flex; align-items: center; color: rgb(var(--fg) / 0.7); }
+.scope { position: absolute; z-index: 6; display: flex; gap: 2px; padding: 4px; border-radius: 18px; border: 1px solid var(--edge); background: var(--pop); box-shadow: inset 0 1px 0 var(--hi), 0 12px 32px rgb(var(--sh) / 0.45); text-shadow: none; animation: scope-in 0.32s var(--curve) both; }
+.scope button { flex: none; height: 30px; padding: 0 12px; border-radius: 14px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.scope.del button { color: var(--danger); }
+@keyframes scope-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } to { opacity: 1; transform: none; } }
+#panel.bubble .wk button { height: 24px; font-size: 11px; }
+#panel.bubble #p-rcount { width: 52px; }
+#panel.bubble .scope button { height: 28px; padding: 0 9px; font-size: 11px; }
+
 #p-count[aria-pressed="true"] { border-color: transparent; background: var(--solid); color: var(--on-solid); text-shadow: none; }
 .pips { flex: 1 1 0; display: flex; gap: 4px; }
 .pip { flex: 1 1 0; height: 6px; border-radius: 3px; background: rgb(var(--fg) / 0.3); transition: background-color 0.4s var(--curve); }
