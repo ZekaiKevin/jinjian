@@ -384,6 +384,35 @@
     return { sel: n1 ? vid(m.id, n1) : m.id };
   }
 
+  // ---------- 传到 iCloud ----------
+
+  // 本机的重复日程要写成日历文本时的样子（交给 ICS.buildSeries）。农历、待办、一场都没有的不传，返回 null。
+  // tz：{ id: 'Asia/Shanghai', offsetMin: 480 }，本机所在的时区。
+  // 开始日期取规则排出的第一场（RFC 5545 里开始那天一定算一场）；结束日期换成那天本机 23:59:59 的 UTC（全天的写日期）。
+  function forUpload(m, tz) {
+    const r = rule(m);
+    if (!r || m.kind !== 'event' || lunarOn(m, r) || !firstOcc(m)) return null;
+    let first = null;
+    for (const h of [400, 4000, 40000]) { first = raw(m, m.date, addDays(m.date, h))[0]; if (first) break; }
+    if (!first) return null;
+    const allDay = !!m.allDay;
+    const rr = m.rrule.split(';').filter(Boolean).map((kv) => {
+      const mm = /^UNTIL=(\d{4})(\d{2})(\d{2})$/i.exec(kv);
+      if (!mm || allDay) return kv;
+      const e = new Date(Number(mm[1]), Number(mm[2]) - 1, Number(mm[3]), 23, 59, 59);
+      return 'UNTIL=' + e.getUTCFullYear() + pad(e.getUTCMonth() + 1) + pad(e.getUTCDate()) + 'T' + pad(e.getUTCHours()) + pad(e.getUTCMinutes()) + pad(e.getUTCSeconds()) + 'Z';
+    }).join(';');
+    const pick = (o) => ({ title: o.title || '', date: o.date, start: o.start || '', end: o.end || '', allDay: !!o.allDay, place: o.place || '', notes: o.notes || '', remind: o.remind });
+    const ex = exSet(m);
+    const overrides = Object.keys(m.overrides || {}).sort().filter((k) => !ex[k] && isOcc(m, k)).map((k) => ({ occ: k, f: pick(occObj(m, k)) }));
+    return Object.assign(pick(m), {
+      date: first, rrule: rr,
+      exdates: Object.keys(ex).filter((k) => k >= first).sort(),
+      overrides: overrides,
+      tz: tz,
+    });
+  }
+
   // ---------- 迁移 ----------
 
   // 读数据时调用：没有重复字段的旧条目一个字都不动；写坏了的重复字段丢掉。原地改，返回同一个数组。
@@ -415,7 +444,7 @@
   const api = {
     isRepeating: isRepeating, expand: expand, get: get, next: next, nearest: nearest, first: firstOcc,
     edit: edit, remove: remove, setRule: setRule, toForm: toForm, fromForm: fromForm, normalize: normalize,
-    vid: vid, parseVid: parseVid, addDays: addDays,
+    vid: vid, parseVid: parseVid, addDays: addDays, forUpload: forUpload,
   };
   global.Recur = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

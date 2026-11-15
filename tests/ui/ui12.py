@@ -110,6 +110,11 @@ with sync_playwright() as p:
     pg.keyboard.press('Escape'); pg.wait_for_timeout(300)
     check('Esc: bubble gone, edit dropped, title reverted', ev('document.getElementById("scope").hidden') and ev('document.getElementById("p-title").value') == '经济学原理' and ev('S.items[0].title') == '经济学原理' and ev('S.panel') == 'detail')
     pg.fill('#p-title', '经济学原理（期中）'); pg.wait_for_timeout(200)
+    ev('closePanels()'); pg.wait_for_timeout(200)
+    check('closed without choosing: edit dropped', ev('S.items[0].title') == '经济学原理' and not ev('S.items[0].overrides') and titles() == ['经济学原理'] and ev('document.getElementById("scope").hidden'))
+    ev('openDetail(%s, false)' % json.dumps(occ_id)); pg.wait_for_timeout(400)
+    check('reopened: original title shown', ev('document.getElementById("p-title").value') == '经济学原理')
+    pg.fill('#p-title', '经济学原理（期中）'); pg.wait_for_timeout(200)
     pg.click('#scope [data-v="one"]'); pg.wait_for_timeout(300)
     check('仅此次: only this occurrence changes', ev('S.items[0].overrides') == {day(0): {'title': '经济学原理（期中）'}} and ev('S.items[0].title') == '经济学原理')
     check('仅此次: focus goes back to the title', ev('document.activeElement.id') == 'p-title')
@@ -258,3 +263,4 @@ with sync_playwright() as p:
 
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED')
+raise SystemExit(0 if ok else 1)

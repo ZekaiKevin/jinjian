@@ -26,7 +26,7 @@ const SWITCHES = [
   { k: 'autostart', name: '开机自启' },
 ];
 const TIP_CONNECT = '填 Apple ID 邮箱和“App 专用密码”（不是登录密码）。\n专用密码在 account.apple.com →“登录与安全”→“App 专用密码”里生成，保存在 Windows 凭据管理器里。';
-const TIP_SYNC = '每 10 分钟同步一次，只同步打开的日历。\n重复日程（比如每周的课）和跨天日程在这里只读，请在 Apple 日历里改。\n其余日程可以直接改，包括提醒，会写回 iCloud。\n待办只存在本机。';
+const TIP_SYNC = '每 10 分钟同步一次，只同步打开的日历。\n日程可以直接改，包括提醒，会写回 iCloud。\n重复日程（比如每周的课）可以改、删其中一次，也可以改全部的标题、地点、备注、提醒；改全部的时间请在 Apple 日历里改。\n跨天日程在这里只读。\n待办和农历重复只存在本机。';
 
 // ---------- 小工具 ----------
 
@@ -260,10 +260,13 @@ function rebuildRemote() {
       try { evs = ICS.parse(res.ics); } catch (err) { return; }
       const recurring = evs.some((e) => e.rrule);
       ICS.expand(evs, range[0], range[1]).forEach((o) => {
-        const id = recurring || o.parts ? 'r|' + href + '|' + o.key : 'r|' + href;
+        // 重复日程的每一场按“原来那一场”记 id：单独改过时间也不变（0.7.0 按改后的时间记，那几场的附加内容照样认）
+        const id = o.parts ? 'r|' + href + '|' + o.key : recurring ? 'r|' + href + '|' + o.ridKey : 'r|' + href;
+        const legacy = recurring && !o.parts && o.ridKey !== o.key ? 'r|' + href + '|' + o.key : '';
+        if (legacy && S.extras[legacy] && !S.extras[id]) { S.extras[id] = S.extras[legacy]; delete S.extras[legacy]; }
         const extra = S.extras[id] || {};
         out.push({
-          id: id, kind: 'event', remote: true, href: href, recurring: recurring, cal: res.cal, calName: cal.name, color: cal.color || '',
+          id: id, kind: 'event', remote: true, href: href, recurring: recurring, rid: o.rid, cal: res.cal, calName: cal.name, color: cal.color || '',
           date: o.date, start: o.start, end: o.end, allDay: o.allDay, title: o.title, place: o.place, notes: o.notes,
           remind: o.remind === null || o.remind === undefined ? 'none' : String(o.remind), subs: extra.subs || [], parts: o.parts || 0, countdown: !!extra.countdown,
         });
@@ -396,15 +399,21 @@ async function pushRes(href) {
 async function uploadPending() {
   const sync = S.settings.sync;
   if (!sync.on || !sync.user) return;
-  const list = S.items.filter((it) => it.kind === 'event' && it.cal && (it.title || '').trim() && it.id !== S.sel && !it.uploading && !Recur.isRepeating(it));
+  // 详情还开着的那一条（重复日程是它的某一场开着）先不传
+  const open = (it) => S.sel === it.id || (typeof S.sel === 'string' && S.sel.indexOf(it.id + '@') === 0);
+  const list = S.items.filter((it) => it.kind === 'event' && it.cal && (it.title || '').trim() && !open(it) && !it.uploading && canCloud(it));
   if (!list.length) return;
-  const sig = (x) => JSON.stringify([x.title, x.date, x.start, x.end, x.allDay, x.place, x.notes, x.remind]);
+  const sig = (x) => JSON.stringify([x.title, x.date, x.start, x.end, x.allDay, x.place, x.notes, x.remind, x.rrule, x.exdates, x.overrides]);
+  // 重复日程整份写（RRULE / EXDATE / RECURRENCE-ID），不重复的照旧
+  const text = (id, it) => (Recur.isRepeating(it) ? (Recur.forUpload(it, localTz()) ? ICS.buildSeries(id, Recur.forUpload(it, localTz())) : '') : ICS.build(id, it));
   for (const it of list) {
-    it.uploading = true;
     const cal = it.cal;
     const id = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : uid('u')).toUpperCase();
     const href = cal + id + '.ics';
-    const ics = ICS.build(id, it);
+    const ics = text(id, it);
+    if (!ics) continue;
+    it.uploading = true;
+    const series = Recur.isRepeating(it);
     const before = sig(it);
     try {
       const r = await dav.put(sync.user, href, ics, '', true);
@@ -417,14 +426,17 @@ async function uploadPending() {
         S.remote.res[href] = res;
         if (sig(it) !== before) {
           // 上传途中用户又改了这一条：把改动补上去
-          res.ics = ICS.patch(ics, Object.assign({}, it));
+          res.ics = series ? text(id, it) || ics : ICS.patch(ics, Object.assign({}, it));
           res.dirty = true;
           pushSoon(href);
         }
         const carry = {};
         if (it.subs && it.subs.length) carry.subs = it.subs;
         if (it.countdown) carry.countdown = true;
-        if (Object.keys(carry).length) S.extras['r|' + href] = carry;
+        // 重复日程：子任务和倒数日标记挂到下一场上（iCloud 的重复日程每一场单独记）
+        const nx = series ? Recur.next(it, today(), false) : null;
+        const rid = nx ? 'r|' + href + '|' + nx.occ.replace(/-/g, '') + (it.allDay ? '' : (it.start || '09:00').replace(':', '')) : 'r|' + href;
+        if (Object.keys(carry).length && (!series || nx)) S.extras[rid] = carry;
         S.items = S.items.filter((x) => x !== it);
         if (S.sel === it.id) S.sel = 'r|' + href; // 详情还开着就接着显示传上去的这条
         setStatus('已保存到 iCloud');
@@ -445,8 +457,31 @@ async function uploadPending() {
 
 // ---------- 改数据 ----------
 
-// 重复日程、跨天日程只能在 Apple 日历里改
-const isLocked = (it) => !!it.remote && (!!it.recurring || !!it.parts);
+// 跨天日程只能在 Apple 日历里改
+const isLocked = (it) => !!it.remote && !!it.parts;
+// 重复系列里的一场：本机的（'local'）或 iCloud 的（'remote'），改它要先问范围
+const seriesOf = (it) => (!it ? '' : it.masterId ? 'local' : it.remote && it.recurring && !it.parts ? 'remote' : '');
+const TIME_KEYS = ['date', 'start', 'end', 'allDay'];
+const hasTime = (p) => TIME_KEYS.some((k) => k in p);
+
+// 本机的时区：重复日程传到 iCloud 时按它写；有夏令时的时区不传（写出来的时区定义只有一段，跨夏令时会错一小时）
+function localTz() {
+  let id = '';
+  try { id = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (err) { id = ''; }
+  const y = new Date().getFullYear();
+  const fixed = new Date(y, 0, 1).getTimezoneOffset() === new Date(y, 6, 1).getTimezoneOffset();
+  return id && fixed ? { id: id, offsetMin: -new Date().getTimezoneOffset() } : null;
+}
+// 这条本机日程能不能传到 iCloud：农历重复、待办、有夏令时的时区里的重复日程不行
+const canCloud = (m) => !!m && m.kind === 'event' && !(Recur.isRepeating(m) && (m.lunar || !localTz()));
+
+// iCloud 重复日程的主事件现在的标题、地点、备注
+function seriesText(res) {
+  let evs = [];
+  try { evs = ICS.parse(res.ics); } catch (err) { evs = []; }
+  const m = evs.find((e) => !e.rid) || evs[0] || {};
+  return { title: m.title || '', place: m.place || '', notes: m.notes || '', start: m.start || null };
+}
 
 // scope 只对本机重复条目的某一场有用：'one' / 'future' / 'all'（完成状态、重点、倒数日、类型不看范围）
 function updateItem(it, p, scope) {
@@ -476,7 +511,29 @@ function updateItem(it, p, scope) {
       it.countdown = !!rest.countdown;
       delete rest.countdown;
     }
-    if (Object.keys(rest).length && !isLocked(it)) {
+    if (Object.keys(rest).length && !isLocked(it) && seriesOf(it) === 'remote') {
+      // iCloud 的重复日程：仅此次 → 单独一块（RECURRENCE-ID）；全部 → 只改主事件的文字
+      const res = S.remote.res[it.href];
+      if (res && it.rid) {
+        if (scope === 'all') {
+          if (!hasTime(rest)) {
+            const old = seriesText(res);
+            const f = { title: 'title' in rest ? rest.title : old.title, place: 'place' in rest ? rest.place : old.place, notes: 'notes' in rest ? rest.notes : old.notes };
+            if ('remind' in rest) f.remind = rest.remind;
+            res.ics = ICS.patchSeries(res.ics, f, old);
+          }
+        } else {
+          const cur = Object.assign({}, it, rest);
+          const f = { title: cur.title, date: cur.date, start: cur.start, end: cur.end, allDay: !!cur.allDay, place: cur.place, notes: cur.notes };
+          if ('remind' in rest) f.remind = rest.remind;
+          res.ics = ICS.setOccurrence(res.ics, it.rid, f);
+        }
+        res.dirty = true;
+        pushSoon(it.href);
+      }
+      Object.assign(it, rest);
+      rebuildRemote();
+    } else if (Object.keys(rest).length && !isLocked(it)) {
       Object.assign(it, rest);
       const res = S.remote.res[it.href];
       if (res) {
@@ -1152,14 +1209,13 @@ function fillPanel(it) {
   else kind.dataset.tip = isTodo ? '点一下改成日程' : '点一下改成待办';
   $('p-cal').textContent = it.remote ? it.calName : '';
   const pick = $('p-cal-pick');
-  const rep = Recur.isRepeating(masterOf(it) || it);
-  pick.hidden = !(!it.remote && !isTodo && sync.on && sync.cals.length) || rep;
+  pick.hidden = !(!it.remote && !isTodo && sync.on && sync.cals.length) || !canCloud(masterOf(it) || it);
   if (!pick.hidden) {
     pick.innerHTML = '<option value="">仅本机</option>' + sync.cals.map((c) => '<option value="' + esc(c.href) + '">' + esc(c.name) + '</option>').join('');
     pick.value = it.cal || '';
   }
   $('p-ro').hidden = !locked;
-  $('p-ro').textContent = it.parts ? '跨天日程，请在 Apple 日历里修改' : '重复日程，请在 Apple 日历里修改';
+  $('p-ro').textContent = '跨天日程，请在 Apple 日历里修改';
   resetDelete();
   $('p-del').hidden = locked;
   $('p-allday').hidden = isTodo;
@@ -1210,7 +1266,8 @@ function fillRepeat(it) {
   $('p-until').value = f.until || '';
   $('p-rcount').hidden = f.end !== 'count';
   $('p-rcount').value = f.count ? String(f.count) : '';
-  $('p-local').hidden = !(own && f.freq && it.kind === 'event' && S.settings.sync.on);
+  // 开着 iCloud 同步、这条重复日程却传不上去（农历、有夏令时的时区）：标一个“只存本机”
+  $('p-local').hidden = !(own && f.freq && it.kind === 'event' && S.settings.sync.on && !canCloud(masterOf(it) || it));
 }
 
 // 详情里正在显示的样子：还在问范围时，把还没定下来的改动叠上去
@@ -1222,13 +1279,18 @@ function selView() {
 
 // 详情里的改动都走这里：重复条目的某一场第一次改时先问范围，问完再写。写进去了返回 true。
 function change(it, p, anchor) {
-  if (it.masterId && !(S.scopeMem && S.scopeMem.id === it.id)) {
+  const series = seriesOf(it);
+  // iCloud 条目上的子任务、倒数日只存在本机，不用问
+  if (it.remote && Object.keys(p).every((k) => k === 'subs' || k === 'countdown')) { updateItem(it, p); return true; }
+  // iCloud 系列选过“全部”以后又改时间：那一项“全部”做不了，重新问
+  if (series === 'remote' && S.scopeMem && S.scopeMem.id === it.id && S.scopeMem.scope !== 'one' && hasTime(p)) S.scopeMem = null;
+  if (series && !(S.scopeMem && S.scopeMem.id === it.id)) {
     if (S.ask && S.ask.mode === 'edit' && S.ask.id === it.id) Object.assign(S.ask.patch, p);
     else S.ask = { mode: 'edit', id: it.id, patch: Object.assign({}, p), anchor: anchor || null };
     renderScope();
     return false;
   }
-  updateItem(it, p, it.masterId ? S.scopeMem.scope : undefined);
+  updateItem(it, p, series ? S.scopeMem.scope : undefined);
   return true;
 }
 
@@ -1245,6 +1307,13 @@ function renderScope() {
   box.hidden = false;
   box.classList.toggle('del', a.mode === 'del');
   box.setAttribute('aria-label', a.mode === 'del' ? '删除哪几次' : '修改哪几次');
+  // iCloud 的重复日程：“此次及以后”的修改、改全部的时间，这里不做
+  const cur = find(a.id);
+  const remote = seriesOf(cur) === 'remote' && a.mode === 'edit';
+  box.querySelectorAll('button').forEach((b) => {
+    const off = remote && (b.dataset.v === 'future' || (b.dataset.v === 'all' && hasTime(a.patch || {})));
+    if (off) { b.setAttribute('aria-disabled', 'true'); b.dataset.tip = '这一项请在 Apple 日历里改'; } else { b.removeAttribute('aria-disabled'); delete b.dataset.tip; }
+  });
   const panel = $('panel');
   const pr = panel.getBoundingClientRect();
   const anchor = a.anchor && a.anchor.isConnected && a.anchor.offsetParent !== null ? a.anchor : $('p-title');
@@ -1260,7 +1329,8 @@ function renderScope() {
   if (wasHidden) sendRectsSoon();
 }
 
-function resolveAsk(scope) {
+function resolveAsk(scope, btn) {
+  if (btn && btn.getAttribute('aria-disabled') === 'true') return;
   const a = S.ask;
   S.ask = null;
   const it = a ? find(a.id) : null;
@@ -1287,6 +1357,7 @@ function cancelAsk() {
 
 // 删重复条目的某一场；本机的都给 4 秒撤销
 function deleteOcc(it, scope) {
+  if (it.remote) { deleteRemoteOcc(it, scope); return; }
   const m = masterOf(it);
   if (!m) return;
   const index = S.items.indexOf(m);
@@ -1298,6 +1369,36 @@ function deleteOcc(it, scope) {
   showToast('已删除「' + (it.title || '未命名') + '」', '撤销', () => {
     const i = S.items.findIndex((x) => x.id === snap.id);
     if (i >= 0) S.items[i] = snap; else S.items.splice(Math.min(index, S.items.length), 0, snap);
+    save();
+    render();
+  });
+  render();
+}
+
+// iCloud 的重复日程：仅此次 → EXDATE；此次及以后 → 规则提前结束；全部 → 删掉整条
+function deleteRemoteOcc(it, scope) {
+  const res = S.remote.res[it.href];
+  setSel(null);
+  S.panel = '';
+  const first = res && it.rid && seriesText(res).start && ICS.toDate(seriesText(res).start).getTime() >= ICS.toDate(it.rid).getTime();
+  if (!res || !it.rid || scope === 'all' || (scope === 'future' && first)) {
+    deleteItem(it).then(render);
+    render();
+    return;
+  }
+  const before = res.ics;
+  res.ics = scope === 'future' ? ICS.endBefore(res.ics, it.rid) : ICS.exclude(res.ics, it.rid);
+  res.dirty = true;
+  pushSoon(it.href);
+  rebuildRemote();
+  save();
+  showToast('已删除「' + (it.title || '未命名') + '」', '撤销', () => {
+    const r = S.remote.res[it.href];
+    if (!r) return;
+    r.ics = before;
+    r.dirty = true;
+    pushSoon(it.href);
+    rebuildRemote();
     save();
     render();
   });
@@ -1318,7 +1419,7 @@ function applyRule(form) {
     fillPanel(it);
     return;
   }
-  if (m && m.lunar && m.cal) delete m.cal; // 农历重复传不上 iCloud
+  if (m && m.cal && !canCloud(m)) delete m.cal; // 农历重复（或有夏令时的时区里的重复）传不上 iCloud
   if (r.sel !== S.sel) { S.sel = r.sel; S.scopeMem = null; S.ask = null; }
   save();
   render();
@@ -1889,7 +1990,7 @@ function onAct(act, t) {
     case 'cd': jumpTo(id); return;
     case 'p-del': {
       if (!cur) return;
-      if (cur.masterId) {
+      if (seriesOf(cur)) {
         // 重复条目：问删哪几场
         if (S.ask && S.ask.mode === 'del') { S.ask = null; renderScope(); return; }
         S.ask = { mode: 'del', id: cur.id, patch: null, anchor: t };
@@ -1942,7 +2043,7 @@ function onAct(act, t) {
       renderSubs(selView(), fresh);
       break;
     }
-    case 'scope': resolveAsk(t.dataset.v); return;
+    case 'scope': resolveAsk(t.dataset.v, t); return;
     case 'p-wk': {
       const f = repeatForm();
       const d = Number(t.dataset.d);
@@ -2158,9 +2259,9 @@ function bind() {
   $('panel-body').addEventListener('scroll', () => { if (S.ask) renderScope(); });
 
   $('p-cal-pick').addEventListener('change', (e) => {
-    const it = find(S.sel);
+    const it = masterOf(find(S.sel));
     if (!it || it.remote) return;
-    if (e.target.value) it.cal = e.target.value;
+    if (e.target.value && canCloud(it)) it.cal = e.target.value;
     else delete it.cal;
     save();
   });

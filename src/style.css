@@ -384,6 +384,9 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .scope { position: absolute; z-index: 6; display: flex; gap: 2px; padding: 4px; border-radius: 18px; border: 1px solid var(--edge); background: var(--pop); box-shadow: inset 0 1px 0 var(--hi), 0 12px 32px rgb(var(--sh) / 0.45); text-shadow: none; animation: scope-in 0.32s var(--curve) both; }
 .scope button { flex: none; height: 30px; padding: 0 12px; border-radius: 14px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .scope.del button { color: var(--danger); }
+.scope button[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.scope button[aria-disabled="true"]:hover { box-shadow: none; }
+.scope button[aria-disabled="true"]:active { transform: none; }
 @keyframes scope-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } to { opacity: 1; transform: none; } }
 #panel.bubble .wk button { height: 24px; font-size: 11px; }
 #panel.bubble #p-rcount { width: 52px; }

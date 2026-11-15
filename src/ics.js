@@ -301,11 +301,21 @@
   function localKey(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
   function localTime(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
 
-  function instance(src, startDt, dur) {
+  // 某一场原来的开始时间（RECURRENCE-ID 用的那个），写成和 key 一样的样子
+  function ridKeyOf(rid) {
+    const d = toDate(rid);
+    return localKey(d).replace(/-/g, '') + (rid.allDay ? '' : localTime(d).replace(':', ''));
+  }
+
+  // rid：重复日程里这一场原来的开始时间（单独改过时间的那一场也是原来的），不重复的为 null
+  function instance(src, startDt, dur, rid) {
     const start = toDate(startDt);
     const allDay = startDt.allDay;
     const end = new Date(start.getTime() + dur * 60000);
+    const key = localKey(start).replace(/-/g, '') + (allDay ? '' : localTime(start).replace(':', ''));
     return {
+      rid: rid || null,
+      ridKey: rid ? ridKeyOf(rid) : key,
       dur: dur,
       uid: src.uid,
       title: src.title,
@@ -316,7 +326,7 @@
       date: localKey(start),
       start: allDay ? '' : localTime(start),
       end: allDay ? '' : localTime(end),
-      key: localKey(start).replace(/-/g, '') + (allDay ? '' : localTime(start).replace(':', '')),
+      key: key,
       ms: start.getTime(),
     };
   }
@@ -358,7 +368,7 @@
       used.add(o);
       if (o.status === 'CANCELLED') return;
       const d = durationMin(o);
-      const changed = instance(o, o.start, d);
+      const changed = instance(o, o.start, d, o.rid);
       if (changed.ms + d * 60000 >= fromMs && changed.ms <= toMs) out.push(changed);
     };
     events.filter((e) => !e.rid).forEach((m) => {
@@ -383,7 +393,7 @@
         count += 1;
         if (ex.has(ms)) return true;
         if (ov.has(ms)) { showOverride(ov.get(ms)); return true; }
-        if (ms + dur * 60000 >= fromMs) out.push(instance(m, dt, dur));
+        if (ms + dur * 60000 >= fromMs) out.push(instance(m, dt, dur, dt));
         return true;
       });
       // 规则里已经排不出来的那一场（超出次数、日期对不上）：服务器上改过的，照样显示
@@ -422,23 +432,29 @@
     return new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]), t ? Number(t[1]) : 0, t ? Number(t[2]) : 0, 0);
   }
 
-  // fields: { title, date, start, end, place, notes, allDay }
-  function timeLines(f) {
+  const ymdOf = (x) => x.getFullYear() + pad(x.getMonth() + 1) + pad(x.getDate());
+  const wallOf = (x) => ymdOf(x) + 'T' + pad(x.getHours()) + pad(x.getMinutes()) + pad(x.getSeconds());
+  const tzParam = (tz) => ';TZID=' + (/[;:,]/.test(tz) ? '"' + tz + '"' : tz);
+
+  // fields: { title, date, start, end, place, notes, allDay }；tz 给了就按“这个时区的本地时间”写（本机就在这个时区），否则写 UTC
+  function timeLines(f, tz) {
     if (f.allDay) {
       const s = fromLocal(f.date, '00:00');
       const e = new Date(s.getTime());
       e.setDate(e.getDate() + 1);
-      const ymd = (x) => x.getFullYear() + pad(x.getMonth() + 1) + pad(x.getDate());
-      return ['DTSTART;VALUE=DATE:' + ymd(s), 'DTEND;VALUE=DATE:' + ymd(e)];
+      return ['DTSTART;VALUE=DATE:' + ymdOf(s), 'DTEND;VALUE=DATE:' + ymdOf(e)];
     }
     const s = fromLocal(f.date, f.start || '09:00');
     let e = fromLocal(f.date, f.end || '');
     if (!f.end || !e || e <= s) e = new Date(s.getTime() + 3600000);
+    if (tz) return ['DTSTART' + tzParam(tz) + ':' + wallOf(s), 'DTEND' + tzParam(tz) + ':' + wallOf(e)];
     return ['DTSTART:' + fmtUTC(s), 'DTEND:' + fmtUTC(e)];
   }
 
-  function bodyLines(f) {
-    const lines = ['DTSTAMP:' + fmtUTC(new Date())].concat(timeLines(f));
+  // keepTime：只换文字，不写开始结束时间（改重复日程“全部”时用）
+  function bodyLines(f, opt) {
+    const o = opt || {};
+    const lines = ['DTSTAMP:' + fmtUTC(new Date())].concat(o.keepTime ? [] : timeLines(f, o.tz));
     lines.push('SUMMARY:' + escText(f.title || '未命名'));
     if (f.place) lines.push('LOCATION:' + escText(f.place));
     if (f.notes) lines.push('DESCRIPTION:' + escText(f.notes));
@@ -457,21 +473,62 @@
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Jinjian//CN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', 'UID:' + uid]
       .concat(bodyLines(f), alarmLines(f.remind))
       .concat(['END:VEVENT', 'END:VCALENDAR']);
-    return lines.map(fold).join('\r\n') + '\r\n';
+    return joinLines(lines);
   }
 
-  // 只改第一个主事件里的标题、时间、地点、备注，其余原样保留。
+  // ---------- 按块改：一份日历文本里每个 VEVENT 的位置 ----------
+
+  const linesOf = (text) => unfold(text).split('\n').filter((l) => l.length > 0);
+  const joinLines = (lines) => lines.map(fold).join('\r\n') + '\r\n';
+
+  // [{ begin, end, rid, uid }]：begin / end 是 BEGIN:VEVENT / END:VEVENT 的行号；rid 是 RECURRENCE-ID（没有为 null）
+  function blocks(lines) {
+    const zones = readZones(lines);
+    const out = [];
+    let cur = null;
+    let depth = 0;
+    lines.forEach((raw, i) => {
+      const line = raw.trim();
+      const up = line.toUpperCase();
+      if (up === 'BEGIN:VEVENT') { cur = { begin: i, end: -1, rid: null, uid: '', start: null }; depth = 0; return; }
+      if (!cur) return;
+      if (up === 'END:VEVENT' && depth === 0) { cur.end = i; out.push(cur); cur = null; return; }
+      if (up.indexOf('BEGIN:') === 0) { depth += 1; return; }
+      if (up.indexOf('END:') === 0) { depth -= 1; return; }
+      if (depth !== 0) return;
+      const p = parseLine(line);
+      if (!p) return;
+      if (p.name === 'UID') cur.uid = p.value.trim();
+      if (p.name === 'RECURRENCE-ID' || p.name === 'DTSTART') {
+        const dt = parseDT(p);
+        const z = dt && dt.tz && !tzKnown(dt.tz) ? zones[dt.tz] : null;
+        if (z && !z.dst && z.std !== null) dt.offset = z.std;
+        if (p.name === 'DTSTART') cur.start = dt; else cur.rid = dt;
+      }
+    });
+    return out;
+  }
+  const masterOf = (bs) => bs.find((b) => !b.rid) || bs[0] || null;
+  const sameMs = (a, b) => !!a && !!b && toDate(a).getTime() === toDate(b).getTime();
+
+  // 一个日期时间按它自己的样子写出来（全天 / UTC / 带时区 / 浮动）
+  function propDT(name, dt) {
+    const w = dt.wall;
+    const ymd = w.y + pad(w.m) + pad(w.d);
+    if (dt.allDay) return name + ';VALUE=DATE:' + ymd;
+    const t = 'T' + pad(w.h) + pad(w.mi) + pad(w.s);
+    if (dt.utc) return name + ':' + ymd + t + 'Z';
+    if (dt.tz) return name + tzParam(dt.tz) + ':' + ymd + t;
+    return name + ':' + ymd + t;
+  }
+
+  // 改某一块里的标题、时间、地点、备注，其余原样保留；返回新的整份行
   // f.remind 不传就不碰原来的提醒（Apple 日历常有两条提醒，不能随手合成一条）；传了就整体替换。
-  function patch(text, f) {
-    const lines = unfold(text).split('\n').filter((l) => l.length > 0);
-    const begin = lines.findIndex((l) => l.trim().toUpperCase() === 'BEGIN:VEVENT');
-    if (begin < 0) return text;
-    let end = -1;
-    for (let i = begin + 1; i < lines.length; i += 1) {
-      if (lines[i].trim().toUpperCase() === 'END:VEVENT') { end = i; break; }
-    }
-    if (end < 0) return text;
-    const drop = /^(SUMMARY|LOCATION|DESCRIPTION|DTSTART|DTEND|DURATION|DTSTAMP|LAST-MODIFIED|SEQUENCE)([;:]|$)/i;
+  function patchBlock(lines, blk, f, opt) {
+    const o = opt || {};
+    const begin = blk.begin;
+    const end = blk.end;
+    const drop = o.keepTime ? /^(SUMMARY|LOCATION|DESCRIPTION|DTSTAMP|LAST-MODIFIED|SEQUENCE)([;:]|$)/i : /^(SUMMARY|LOCATION|DESCRIPTION|DTSTART|DTEND|DURATION|DTSTAMP|LAST-MODIFIED|SEQUENCE)([;:]|$)/i;
     const swapAlarm = f.remind !== undefined;
     let seq = 0;
     let nested = 0;
@@ -493,12 +550,159 @@
       kept.push(lines[i]);
       if (up.indexOf('END:') === 0) nested -= 1;
     }
-    const fresh = bodyLines(f).concat(['SEQUENCE:' + (seq + 1), 'LAST-MODIFIED:' + fmtUTC(new Date())]);
-    const all = lines.slice(0, begin + 1).concat(fresh, kept, swapAlarm ? alarmLines(f.remind) : [], lines.slice(end));
-    return all.map(fold).join('\r\n') + '\r\n';
+    const fresh = bodyLines(f, o).concat(['SEQUENCE:' + (seq + 1), 'LAST-MODIFIED:' + fmtUTC(new Date())]);
+    return lines.slice(0, begin + 1).concat(fresh, kept, swapAlarm ? alarmLines(f.remind) : [], lines.slice(end));
   }
 
-  const api = { parse: parse, expand: expand, build: build, patch: patch, toDate: toDate, unfold: unfold, parseRRule: parseRRule };
+  // 改主事件（有单独改动的重复日程里，是没有 RECURRENCE-ID 的那一块）
+  function patch(text, f) {
+    const lines = linesOf(text);
+    const m = masterOf(blocks(lines));
+    if (!m) return text;
+    return joinLines(patchBlock(lines, m, f));
+  }
+
+  // 一块里的 VALARM 原文
+  function alarmsOf(lines, blk) {
+    const out = [];
+    let inAlarm = false;
+    for (let i = blk.begin + 1; i < blk.end; i += 1) {
+      const up = lines[i].trim().toUpperCase();
+      if (up === 'BEGIN:VALARM') inAlarm = true;
+      if (inAlarm) out.push(lines[i]);
+      if (up === 'END:VALARM') inAlarm = false;
+    }
+    return out;
+  }
+
+  // ---------- 重复日程：改一场、删一场、截断、改全部 ----------
+
+  // 仅此次：rid 是这一场原来的开始时间。已经有这一场的单独改动就改它，没有就新加一块（照抄主事件的提醒）
+  function setOccurrence(text, rid, f) {
+    const lines = linesOf(text);
+    const bs = blocks(lines);
+    const m = masterOf(bs);
+    if (!m) return text;
+    const own = bs.find((b) => b.rid && sameMs(b.rid, rid));
+    if (own) return joinLines(patchBlock(lines, own, f));
+    const alarms = f.remind !== undefined ? alarmLines(f.remind) : alarmsOf(lines, m);
+    const block = ['BEGIN:VEVENT', 'UID:' + m.uid, propDT('RECURRENCE-ID', rid)].concat(bodyLines(f), ['SEQUENCE:0'], alarms, ['END:VEVENT']);
+    const last = bs[bs.length - 1].end;
+    return joinLines(lines.slice(0, last + 1).concat(block, lines.slice(last + 1)));
+  }
+
+  // 删仅此次：主事件加一条 EXDATE（写法和这一场原来的开始时间一样），这一场的单独改动一并删掉
+  function exclude(text, rid) {
+    const lines = linesOf(text);
+    const bs = blocks(lines);
+    const m = masterOf(bs);
+    if (!m) return text;
+    const gone = bs.filter((b) => b.rid && sameMs(b.rid, rid));
+    const out = [];
+    lines.forEach((l, i) => {
+      if (gone.some((b) => i >= b.begin && i <= b.end)) return;
+      if (i === m.end) out.push(propDT('EXDATE', rid));
+      out.push(l);
+    });
+    return joinLines(out);
+  }
+
+  // 删此次及以后：规则到这一场之前为止（有次数的改次数，被删掉的场次也算数），这之后的单独改动删掉
+  function endBefore(text, rid) {
+    const lines = linesOf(text);
+    const bs = blocks(lines);
+    const m = masterOf(bs);
+    if (!m) return text;
+    const ms = toDate(rid).getTime();
+    const ev = parse(text).find((e) => !e.rid && e.rrule);
+    if (!ev) return text;
+    let end;
+    if (ev.rrule.count) {
+      const bare = Object.assign({}, ev, { exdates: [] });
+      const n = expand([bare], toDate(ev.start), new Date(ms - 1)).filter((o) => !o.part || o.part === 1).length;
+      end = 'COUNT=' + n;
+    } else if (ev.start.allDay) {
+      end = 'UNTIL=' + ymdOf(new Date(ms - DAY));
+    } else {
+      end = 'UNTIL=' + fmtUTC(new Date(ms - 1000));
+    }
+    const out = [];
+    lines.forEach((l, i) => {
+      if (bs.some((b) => b.rid && toDate(b.rid).getTime() >= ms && i >= b.begin && i <= b.end)) return;
+      if (i > m.begin && i < m.end && /^RRULE:/i.test(l.trim())) {
+        const kept = l.trim().slice(6).split(';').filter((kv) => kv && !/^(UNTIL|COUNT)=/i.test(kv));
+        out.push('RRULE:' + kept.concat([end]).join(';'));
+        return;
+      }
+      out.push(l);
+    });
+    return joinLines(out);
+  }
+
+  // 改全部（只改文字：标题、地点、备注，可选提醒；不碰时间、规则、例外）。
+  // 单独改过的场次里，和原来的主事件一样的那几项跟着改，它自己改过的不动。old 是改之前主事件的这几项。
+  function patchSeries(text, f, old) {
+    const KEYS = [['title', 'SUMMARY'], ['place', 'LOCATION'], ['notes', 'DESCRIPTION']];
+    let lines = linesOf(text);
+    const evs = parse(text);
+    const bs = blocks(lines);
+    const m = masterOf(bs);
+    if (!m) return text;
+    // 从后往前改，前面块的行号不受影响
+    const order = bs.slice().sort((a, b) => b.begin - a.begin);
+    order.forEach((b) => {
+      if (b === m) {
+        lines = patchBlock(lines, b, { title: f.title, place: f.place, notes: f.notes, remind: f.remind }, { keepTime: true });
+        return;
+      }
+      const e = evs.find((x) => x.rid && sameMs(x.rid, b.rid));
+      if (!e) return;
+      const cur = { title: e.title, place: e.place, notes: e.notes };
+      let touched = false;
+      KEYS.forEach((k) => {
+        const was = (old && old[k[0]]) || '';
+        const now = f[k[0]] || '';
+        if (now !== was && (cur[k[0]] || '') === was) { cur[k[0]] = now; touched = true; }
+      });
+      if (touched) lines = patchBlock(lines, b, cur, { keepTime: true });
+    });
+    return joinLines(lines);
+  }
+
+  // 本机的重复日程整份写出来：主事件带 RRULE / EXDATE，单独改过的场次各一块（RECURRENCE-ID）。
+  // s：{ title, place, notes, remind, allDay, date, start, end, rrule, exdates: [日期], overrides: [{ occ: 日期, f }], tz: { id, offsetMin } }
+  function buildSeries(uid, s) {
+    const tz = s.tz && s.tz.id ? s.tz : null;
+    const at = (k) => {
+      const d = fromLocal(k, s.allDay ? '00:00' : (s.start || '09:00'));
+      return s.allDay ? ';VALUE=DATE:' + ymdOf(d) : (tz ? tzParam(tz.id) : '') + ':' + (tz ? wallOf(d) : fmtUTC(d));
+    };
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Jinjian//CN', 'CALSCALE:GREGORIAN'];
+    if (tz) {
+      const off = tz.offsetMin;
+      const hhmm = (off < 0 ? '-' : '+') + pad(Math.floor(Math.abs(off) / 60)) + pad(Math.abs(off) % 60);
+      lines.push('BEGIN:VTIMEZONE', 'TZID:' + tz.id, 'BEGIN:STANDARD', 'DTSTART:19700101T000000', 'TZOFFSETFROM:' + hhmm, 'TZOFFSETTO:' + hhmm, 'END:STANDARD', 'END:VTIMEZONE');
+    }
+    lines.push('BEGIN:VEVENT', 'UID:' + uid);
+    bodyLines(s, { tz: tz && tz.id }).forEach((l) => lines.push(l));
+    lines.push('RRULE:' + s.rrule);
+    (s.exdates || []).forEach((k) => lines.push('EXDATE' + at(k)));
+    alarmLines(s.remind).forEach((l) => lines.push(l));
+    lines.push('END:VEVENT');
+    (s.overrides || []).forEach((o) => {
+      lines.push('BEGIN:VEVENT', 'UID:' + uid, 'RECURRENCE-ID' + at(o.occ));
+      bodyLines(o.f, { tz: tz && tz.id }).forEach((l) => lines.push(l));
+      alarmLines(o.f.remind).forEach((l) => lines.push(l));
+      lines.push('END:VEVENT');
+    });
+    lines.push('END:VCALENDAR');
+    return joinLines(lines);
+  }
+
+  const api = {
+    parse: parse, expand: expand, build: build, patch: patch, toDate: toDate, unfold: unfold, parseRRule: parseRRule,
+    buildSeries: buildSeries, setOccurrence: setOccurrence, exclude: exclude, endBefore: endBefore, patchSeries: patchSeries,
+  };
   global.ICS = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
