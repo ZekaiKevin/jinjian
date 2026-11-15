@@ -377,6 +377,20 @@
         <span id="c-count" class="count"></span>
       </div>
     </section>
+
+    <!-- Ctrl + F 搜索 -->
+    <section id="search" class="layer from-scale" aria-label="搜索" aria-hidden="true">
+      <div class="row gap8 search-head">
+        <label class="quick search-field">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="M13.2 13.2L17 17"/></svg>
+          <input id="search-input" type="text" placeholder="搜索日程、待办、便签" autocomplete="off" spellcheck="false" aria-label="搜索" role="combobox" aria-autocomplete="list" aria-controls="search-list" aria-expanded="false">
+        </label>
+        <button type="button" class="icon tap" data-act="search-close" aria-label="关闭搜索" data-tip="关闭（Esc）">
+          <svg width="18" height="18" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>
+        </button>
+      </div>
+      <div id="search-list" class="col scroll" role="listbox" aria-label="搜索结果"></div>
+    </section>
   </div>
 
   <!-- 贴边胶囊 -->
@@ -398,6 +412,7 @@
 <script src="ics.js"></script>
 <script src="lunar.js"></script>
 <script src="nlp.js"></script>
+<script src="search.js"></script>
 <script src="caldav.js"></script>
 <script src="app.js"></script>
 </body>

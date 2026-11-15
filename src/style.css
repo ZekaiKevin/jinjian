@@ -573,6 +573,22 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .prow .ps { font-size: 12px; color: rgb(var(--fg) / 0.84); font-variant-numeric: tabular-nums; }
 .pempty { padding: 8px 6px; font-size: 13px; color: rgb(var(--fg) / 0.84); }
 
+/* ---------- Ctrl + F 搜索：盖在整块玻璃上 ---------- */
+
+#search { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px; transform-origin: top right; }
+.search-head { flex-shrink: 0; }
+.search-field { flex: 1 1 0; min-width: 0; padding: 0 14px; }
+.search-field svg { flex: none; opacity: 0.8; }
+#search-list { flex: 1 1 0; min-height: 0; gap: 2px; margin: 0 -8px; padding: 0 8px 4px; overflow-y: auto; }
+.prow.hit { grid-template-columns: 12px minmax(0, 1fr) auto; }
+.prow.hit .col { min-width: 0; }
+.prow.hit.on { background-color: var(--sel); }
+.prow.hit.t .mark { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgb(var(--fg)); background: transparent; }
+.prow.hit.t.done .mark { border-color: var(--mint); background: var(--mint); }
+.prow.hit.n { --cm: var(--note); }
+.prow.hit .pw { font-size: 12px; color: rgb(var(--fg) / 0.84); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.prow.hit mark { padding: 0 1px; border-radius: 3px; background: rgb(var(--accent-rgb) / 0.34); color: inherit; text-shadow: inherit; }
+
 /* ---------- 迷你专注条与贴边胶囊 ---------- */
 
 #compact { position: absolute; top: 0; right: 0; width: 348px; display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 16px; transform-origin: top right; }

@@ -126,6 +126,8 @@ const S = {
   syncing: false,
   status: '',
   foldSync: null,   // 设置里 iCloud 区域是否展开；null 表示按默认（已连接就收起）
+  search: false,    // Ctrl + F 搜索层是否打开
+  searchBack: null, // 打开搜索前的状态：迷你条 / 胶囊、当时的焦点，Esc 退回去用
   hold: {},         // 刚勾掉的待办先在原位停一下再沉底：id → 到期时间
 };
 let R = [];           // 同步来的日程展开后的具体场次
@@ -841,14 +843,16 @@ function applyMode() {
   } else if (S.big) {
     w = 768;
     h = Math.min(640, full);
-  } else if (S.mode === 'cal') {
+  } else if (S.mode === 'cal' && !S.search) {
     h = Math.min(full, 156 + $('cal').offsetHeight);
   }
   shell.style.width = w + 'px';
   shell.style.height = h + 'px';
   shell.classList.toggle('gone', S.compact === 'capsule');
-  $('widget').classList.toggle('on', !S.big && !S.compact);
-  $('big').classList.toggle('on', S.big && !S.compact);
+  $('widget').classList.toggle('on', !S.big && !S.compact && !S.search);
+  $('big').classList.toggle('on', S.big && !S.compact && !S.search);
+  $('search').classList.toggle('on', S.search);
+  $('search').setAttribute('aria-hidden', S.search ? 'false' : 'true');
   $('compact').classList.toggle('on', S.compact === 'card');
   $('capsule').classList.toggle('on', S.compact === 'capsule');
   $('day').classList.toggle('on', S.mode === 'day');
@@ -916,6 +920,133 @@ function render() {
   if (detail) positionPanel();
   S.justDone = null;
   sendRectsSoon();
+}
+
+// ---------- Ctrl + F 搜索 ----------
+// 盖在整块玻璃上，搜全部历史的日程（含 iCloud 缓存）、待办和便签。纯函数在 search.js。
+
+let searchHits = [];   // 当前结果：{ note: false, h } 或 { note: true, h }
+let searchIdx = 0;
+let composing = false; // 输入法正在组字
+
+const FIELD_NAME = { place: '地点', notes: '备注', subs: '子任务' };
+
+function markHtml(text, toks) {
+  return Search.segments(text, toks).map((x) => (x.m ? '<mark>' + esc(x.t) + '</mark>' : esc(x.t))).join('');
+}
+
+function hitDate(key) {
+  const d = fromIso(key);
+  return (d.getFullYear() === new Date().getFullYear() ? '' : d.getFullYear() + '年') + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+}
+
+function hitHtml(x, i, toks) {
+  const h = x.h;
+  const on = i === searchIdx;
+  if (x.note) {
+    return '<button type="button" class="prow hit n tap' + (on ? ' on' : '') + '" role="option" id="hit-' + i + '" aria-selected="' + on + '" data-act="hit-note" data-i="' + i + '">'
+      + '<span class="mark"></span><span class="col"><span class="pn ellipsis">便签</span><span class="ps ellipsis">' + markHtml(h.snippet, toks) + '</span></span><span class="pw"></span></button>';
+  }
+  let sub;
+  if (h.field) sub = esc(FIELD_NAME[h.field]) + '：' + markHtml(h.snippet, toks);
+  else if (h.kind === 'todo') sub = esc((h.done ? '已完成' : '待办') + (h.due ? ' · ' + h.due + ' 截止' : '') + (h.place ? ' · ' + h.place : ''));
+  else sub = esc((h.allDay ? '全天' : (h.start || '') + (h.end ? ' – ' + h.end : '')) + (h.place ? ' · ' + h.place : ''));
+  const cls = ['prow', 'hit', h.kind === 'todo' ? 't' : 'e', 'tap'];
+  if (h.done) cls.push('done');
+  if (on) cls.push('on');
+  return '<button type="button" class="' + cls.join(' ') + '" role="option" id="hit-' + i + '" aria-selected="' + on + '" data-act="hit" data-id="' + esc(h.id) + '" data-i="' + i + '"' + color(h.color) + '>'
+    + '<span class="mark"></span><span class="col"><span class="pn ellipsis">' + markHtml(h.title || '未命名', toks) + '</span><span class="ps ellipsis">' + sub + '</span></span>'
+    + '<span class="pw">' + esc(hitDate(h.date)) + '</span></button>';
+}
+
+function renderSearchList() {
+  const toks = Search.tokens($('search-input').value);
+  const list = $('search-list');
+  setHtml(list, searchHits.map((x, i) => hitHtml(x, i, toks)).join('') || (toks.length ? '<div class="pempty">没有找到</div>' : ''));
+  $('search-input').setAttribute('aria-expanded', searchHits.length ? 'true' : 'false');
+  if (searchHits.length) $('search-input').setAttribute('aria-activedescendant', 'hit-' + searchIdx);
+  else $('search-input').removeAttribute('aria-activedescendant');
+}
+
+function runSearch() {
+  const r = Search.run({ items: allItems(), note: S.note, query: $('search-input').value, today: today() });
+  searchHits = r.items.map((h) => ({ note: false, h: h })).concat(r.note ? [{ note: true, h: r.note }] : []);
+  searchIdx = 0;
+  $('search-list').scrollTop = 0;
+  renderSearchList();
+}
+
+function moveHit(step) {
+  if (!searchHits.length) return;
+  searchIdx = Math.max(0, Math.min(searchHits.length - 1, searchIdx + step));
+  renderSearchList();
+  const el = $('hit-' + searchIdx);
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
+function openSearch() {
+  if (!S.search) {
+    S.searchBack = { compact: S.compact, focus: document.activeElement };
+    setSel(null);
+    S.panel = '';
+    S.pop = null;
+    S.compact = ''; // 迷你条和胶囊放不下搜索，先展开
+    S.search = true;
+    composing = false;
+    runSearch();
+    render();
+  }
+  $('search-input').focus();
+  $('search-input').select();
+}
+
+function closeSearch(restore) {
+  if (!S.search) return;
+  const back = S.searchBack || {};
+  S.search = false;
+  composing = false;
+  $('search-input').blur();
+  if (restore) S.compact = back.compact || '';
+  render();
+  const f = back.focus;
+  if (restore && f && f !== document.body && document.contains(f) && !f.disabled && f.offsetParent !== null) f.focus();
+}
+
+function openHit(i) {
+  const x = searchHits[i];
+  if (!x) return;
+  if (x.note) { jumpToNote(x.h); return; }
+  jumpTo(x.h.id);
+}
+
+// 跳到那一天并打开详情
+function jumpTo(id) {
+  const it = find(id);
+  if (!it) return;
+  closeSearch(false);
+  const d = fromIso(it.date);
+  if (S.date !== it.date) { replay($('events'), 'swap'); replay($('todos'), 'swap'); }
+  S.date = it.date;
+  S.vm = { y: d.getFullYear(), m: d.getMonth() };
+  S.nav = false;
+  if (!S.big) S.mode = 'day';
+  openDetail(id, false);
+}
+
+// 便签在小组件里：展开它，把命中的那一段选中（先聚焦再选，浏览器才会滚到那里）
+function jumpToNote(h) {
+  closeSearch(false);
+  S.settings.fold.note = false;
+  S.big = false;
+  S.pop = null;
+  S.mode = 'day';
+  save();
+  render();
+  setTimeout(() => {
+    const n = $('note');
+    n.focus();
+    n.setSelectionRange(h.pos, h.pos + h.len);
+  }, 60);
 }
 
 // ---------- 详情 ----------
@@ -1467,6 +1598,8 @@ function onAct(act, t) {
     case 'expand': S.compact = ''; break;
     case 'big-open': setSel(null); S.prevMode = S.mode; S.big = true; S.panel = ''; break;
     case 'big-close': S.big = false; S.mode = S.prevMode || 'day'; S.pop = null; break;
+    case 'hit': case 'hit-note': openHit(Number(t.dataset.i)); return;
+    case 'search-close': closeSearch(true); return;
     case 'prev-month': shiftMonth(-1); break;
     case 'next-month': shiftMonth(1); break;
     case 'go-today': {
@@ -1646,7 +1779,11 @@ function bind() {
 
   // Esc 一层一层往回退：当天小窗口 → 详情/设置 → 月视图 → 折叠日历
   window.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return;
+    if (e.isComposing || e.keyCode === 229) return;
+    // Ctrl + F：只在小组件有焦点时生效，不注册系统级快捷键；顺便挡掉浏览器自己的查找条
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); openSearch(); return; }
+    if (e.key !== 'Escape') return;
+    if (S.search) { closeSearch(true); return; }
     if (S.pop) { S.pop = null; render(); return; }
     if (S.panel) { closePanels(); return; }
     if (S.big) { onAct('big-close', document.body); return; }
@@ -1678,6 +1815,18 @@ function bind() {
   });
 
   $('note').addEventListener('input', (e) => { S.note = e.target.value; save(); });
+
+  // 搜索框：输入法组字时不搜（组完再搜），组字时的回车、Esc、方向键都不算
+  const sInput = $('search-input');
+  sInput.addEventListener('compositionstart', () => { composing = true; });
+  sInput.addEventListener('compositionend', () => { composing = false; runSearch(); });
+  sInput.addEventListener('input', (e) => { if (!e.isComposing && !composing) runSearch(); });
+  sInput.addEventListener('blur', () => { composing = false; });
+  sInput.addEventListener('keydown', (e) => {
+    if (e.isComposing || composing || e.keyCode === 229) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); moveHit(e.key === 'ArrowDown' ? 1 : -1); }
+    else if (e.key === 'Enter') { e.preventDefault(); openHit(searchIdx); }
+  });
 
   // 详情里的输入框
   const field = (id, key, ev) => $(id).addEventListener(ev || 'input', (e) => {
