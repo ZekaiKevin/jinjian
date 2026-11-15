@@ -1,6 +1,6 @@
 // 模拟外壳和一个假的 iCloud，用来在浏览器里走通同步流程
 (() => {
-  const log = (window.__log = { dav: [], notify: [], rects: 0, calls: [] });
+  const log = (window.__log = { dav: [], notify: [], rects: 0, calls: [], hold: [] });
   // 测试用的开关：noEtag 上传成功但不回版本号；failPut 接下来几次上传返回 500；delay 每个请求慢多少毫秒
   const opts = (window.__davOpts = { noEtag: false, failPut: 0, delay: 0 });
   const listeners = (window.__listeners = {});
@@ -67,6 +67,7 @@
       if (cmd === 'save_data') { stored = args.json; window.__stored = stored; return null; }
       if (cmd === 'wallpaper') { const r = await fetch(window.__WP); return await r.arrayBuffer(); }
       if (cmd === 'set_hit_rects') { log.rects = args.rects.length; return null; }
+      if (cmd === 'set_hit_hold') { log.hold.push(args.hold); return null; }
       if (cmd === 'dav') { if (opts.delay) await new Promise((r) => setTimeout(r, opts.delay)); return davMock(args.req); }
       if (cmd === 'get_holidays') return window.__HOLIDAYS || '';
       if (cmd === 'notify') { log.notify.push(args); return null; }

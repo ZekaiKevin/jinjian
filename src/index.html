@@ -367,25 +367,34 @@
     <section id="big" class="layer from-scale" aria-label="月视图">
       <div class="row gap6 big-head">
         <h2 id="big-title" class="big-title"></h2>
-        <button type="button" class="help" data-tip="点格子或日期数字：弹出这天的日程和待办。&#10;点某条日程：在旁边直接修改。&#10;左上角带圆圈的数字：这天没做完的待办。" aria-label="说明">?</button>
+        <button id="big-help" type="button" class="help" data-tip="点格子或日期数字：弹出这天的日程和待办。&#10;点某条日程：在旁边直接修改。&#10;左上角带圆圈的数字：这天没做完的待办。" aria-label="说明">?</button>
         <span class="grow"></span>
         <button type="button" class="pill accent tap" data-act="add-event">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
           <span>日程</span>
         </button>
         <button type="button" class="pill tap" data-act="go-today">今天</button>
-        <button type="button" class="icon tap" data-act="prev-month" aria-label="上个月">
+        <button id="big-prev" type="button" class="icon tap" data-act="prev-month" aria-label="上个月">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4L6 9l5 5"/></svg>
         </button>
-        <button type="button" class="icon tap" data-act="next-month" aria-label="下个月">
+        <button id="big-next" type="button" class="icon tap" data-act="next-month" aria-label="下个月">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l5 5-5 5"/></svg>
         </button>
-        <button type="button" class="icon tap" data-act="big-close" aria-label="收起月视图" data-tip="收起月视图">
+        <div class="seg mini" role="group" aria-label="视图">
+          <button id="big-v-month" type="button" class="tap" data-act="big-view" data-v="month" aria-pressed="true">月</button>
+          <button id="big-v-week" type="button" class="tap" data-act="big-view" data-v="week" aria-pressed="false">周</button>
+        </div>
+        <button id="big-close" type="button" class="icon tap" data-act="big-close" aria-label="收起月视图" data-tip="收起月视图">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5L11 9M11 4.5V9h4.5M3.5 16.5L9 11M9 15.5V11H4.5"/></svg>
         </button>
       </div>
-      <div class="weekdays wide" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
-      <div class="big-wrap">
+      <div id="week" class="wkv" role="group" aria-label="周视图" hidden>
+        <div id="week-head" class="week-head"></div>
+        <div id="week-allday" class="week-allday scroll"></div>
+        <div id="week-body" class="week-body scroll"><div id="week-inner" class="week-inner"></div></div>
+      </div>
+      <div id="month-days" class="weekdays wide" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+      <div id="month-wrap" class="big-wrap">
         <div id="big-grid" class="big-grid"></div>
         <div id="pop" class="layer from-scale" aria-hidden="true">
           <div class="row gap2 pop-head">
@@ -464,6 +473,7 @@
 <script src="nlp.js"></script>
 <script src="search.js"></script>
 <script src="countdown.js"></script>
+<script src="week.js"></script>
 <script src="caldav.js"></script>
 <script src="app.js"></script>
 </body>

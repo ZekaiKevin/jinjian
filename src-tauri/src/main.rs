@@ -36,6 +36,9 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 static QUITTING: AtomicBool = AtomicBool::new(false);
 /// 退出前界面已经把数据写完了。
 static FLUSHED: AtomicBool = AtomicBool::new(false);
+/// “拖动中保持可点击”最多撑这么久。界面拖动时每隔几秒会重新报一次；
+/// 万一页面卡死、没来得及报“松手了”，超过这个时间就自己放开，免得整块透明窗口一直挡着桌面。
+const HOLD_MAX: Duration = Duration::from_secs(30);
 
 /// 界面上报的可点击区域（相对窗口左上角的物理像素），以及是否处于“鼠标穿透”。
 #[derive(Default)]
@@ -44,6 +47,9 @@ struct Hit {
     locked: bool,
     /// 用户选了“始终置顶”：这时不挂在桌面上，也不需要管“显示桌面”。
     top: bool,
+    /// 界面正在拖动东西（周视图里拖日程）：从按下报到松开。这期间鼠标离开玻璃区域也不穿透，
+    /// 否则指针一出界面，窗口就把鼠标让给桌面，松手的事件再也收不到。记的是最近一次报“按下”的时刻。
+    hold: Option<Instant>,
 }
 
 type Shared = Arc<Mutex<Hit>>;
@@ -164,6 +170,14 @@ fn wallpaper() -> Result<tauri::ipc::Response, String> {
 fn set_hit_rects(state: State<'_, Shared>, rects: Vec<[f64; 4]>) {
     if let Ok(mut hit) = state.lock() {
         hit.rects = rects;
+    }
+}
+
+/// 界面按下 / 松开拖动时调用。hold 为 true 期间，光标在窗口哪里都当作落在玻璃上。
+#[tauri::command]
+fn set_hit_hold(state: State<'_, Shared>, hold: bool) {
+    if let Ok(mut hit) = state.lock() {
+        hit.hold = if hold { Some(Instant::now()) } else { None };
     }
 }
 
@@ -469,8 +483,13 @@ fn main() {
                         thread::sleep(tick);
                     }
                     while wake_rx.try_recv().is_ok() {}
-                    let (rects, locked, top) = match for_thread.lock() {
-                        Ok(hit) => (hit.rects.clone(), hit.locked, hit.top),
+                    let (rects, locked, top, holding) = match for_thread.lock() {
+                        Ok(hit) => (
+                            hit.rects.clone(),
+                            hit.locked,
+                            hit.top,
+                            hit.hold.map_or(false, |t| t.elapsed() < HOLD_MAX),
+                        ),
                         Err(_) => continue,
                     };
                     if let Some(desk) = &desk {
@@ -502,7 +521,10 @@ fn main() {
                         let _ = win.unminimize();
                     }
                     let mut inside = false;
-                    if !locked {
+                    if !locked && holding {
+                        // 正在拖动：不管光标在哪都保持可点击
+                        inside = true;
+                    } else if !locked {
                         if let (Ok(cursor), Ok(origin)) = (win.cursor_position(), win.outer_position()) {
                             let x = cursor.x - origin.x as f64;
                             let y = cursor.y - origin.y as f64;
@@ -549,6 +571,7 @@ fn main() {
             flush_done,
             wallpaper,
             set_hit_rects,
+            set_hit_hold,
             set_locked,
             set_layer,
             set_autostart,

@@ -25,6 +25,9 @@ const SWITCHES = [
   { k: 'hol', name: '休 / 班角标', tip: '法定节假日标“休”，调休上班的日子标“班”。\n内置 2025–2027 年；之后的年份，把 holidays.json 放进数据目录就能补上。' },
   { k: 'autostart', name: '开机自启' },
 ];
+const TIP_MONTH = '点格子或日期数字：弹出这天的日程和待办。\n点某条日程：在旁边直接修改。\n左上角带圆圈的数字：这天没做完的待办。';
+const TIP_WEEK = '拖日程到别的天或别的时间，15 分钟一格；拖日程的下边缘改结束时间。\n在空白处按住拖出一段：新建日程。\n待办可以拖到别的天。\n点某条日程：在旁边直接修改。';
+const TIP_RO = '跨天日程，请在 Apple 日历里修改';
 const TIP_CONNECT = '填 Apple ID 邮箱和“App 专用密码”（不是登录密码）。\n专用密码在 account.apple.com →“登录与安全”→“App 专用密码”里生成，保存在 Windows 凭据管理器里。';
 const TIP_SYNC = '每 10 分钟同步一次，只同步打开的日历。\n日程可以直接改，包括提醒，会写回 iCloud。\n重复日程（比如每周的课）可以改、删其中一次，也可以改全部的标题、地点、备注、提醒；改全部的时间请在 Apple 日历里改。\n跨天日程在这里只读。\n待办和农历重复只存在本机。';
 
@@ -111,7 +114,8 @@ const S = {
   remote: { res: {}, at: 0 }, // iCloud 条目的本地缓存：res[地址] = { etag, ics, cal, dirty }
   // 只在运行时用的
   mode: 'day',      // 小组件里显示“某一天”还是“折叠日历”
-  big: false,       // 是否展开成月视图
+  big: false,       // 是否展开成月视图（月 / 周都算展开）
+  week: false,      // 展开后看周还是看月；周以 S.date 所在的那一周为准（周日起）
   compact: '',      // ''、'card'（迷你条）、'capsule'（贴边胶囊）
   date: today(),    // 当前看的日期
   nav: false,       // 用“前一天 / 后一天”一路翻回今天时，那一排按钮先留着，方便接着翻
@@ -156,6 +160,7 @@ function rebuildLocal() {
     add(iso(new Date(S.vm.y, S.vm.m, 1 - first.getDay())), iso(new Date(S.vm.y, S.vm.m, 1 - first.getDay() + 41)));
   }
   add(S.date, S.date);
+  if (S.big && S.week) add(Week.weekStart(S.date), Week.addDays(Week.weekStart(S.date), 6));
   ranges.sort((a, b) => (a[0] < b[0] ? -1 : 1));
   const merged = [];
   ranges.forEach((r) => {
@@ -458,7 +463,7 @@ async function uploadPending() {
 // ---------- 改数据 ----------
 
 // 跨天日程只能在 Apple 日历里改
-const isLocked = (it) => !!it.remote && !!it.parts;
+const isLocked = (it) => Week.locked(it);
 // 重复系列里的一场：本机的（'local'）或 iCloud 的（'remote'），改它要先问范围
 const seriesOf = (it) => (!it ? '' : it.masterId ? 'local' : it.remote && it.recurring && !it.parts ? 'remote' : '');
 const TIME_KEYS = ['date', 'start', 'end', 'allDay'];
@@ -873,9 +878,22 @@ function renderCal(map, month) {
 }
 
 function renderBig(map, month) {
+  const wk = S.week;
+  $('week').hidden = !wk;
+  $('month-days').hidden = wk;
+  $('month-wrap').hidden = wk;
+  $('big').setAttribute('aria-label', wk ? '周视图' : '月视图');
+  $('big-title').textContent = wk ? Week.rangeTitle(S.date) : S.vm.y + '年' + (S.vm.m + 1) + '月';
+  $('big-prev').setAttribute('aria-label', wk ? '上一周' : '上个月');
+  $('big-next').setAttribute('aria-label', wk ? '下一周' : '下个月');
+  $('big-close').setAttribute('aria-label', wk ? '收起周视图' : '收起月视图');
+  $('big-close').dataset.tip = wk ? '收起周视图' : '收起月视图';
+  $('big-help').dataset.tip = wk ? TIP_WEEK : TIP_MONTH;
+  $('big-v-month').setAttribute('aria-pressed', wk ? 'false' : 'true');
+  $('big-v-week').setAttribute('aria-pressed', wk ? 'true' : 'false');
+  if (wk) return;
   const t = today();
   const max = month.rows >= 6 ? 4 : 5;
-  $('big-title').textContent = S.vm.y + '年' + (S.vm.m + 1) + '月';
   setHtml($('big-grid'), month.days.map((x) => {
     const list = map[x.key] || [];
     const events = sortEvents(list);
@@ -901,6 +919,402 @@ function renderBig(map, month) {
     }
     return html + '</div>';
   }).join(''));
+}
+
+// ---------- 周视图 ----------
+// 七列（周日起）加时间轴，顶部一行放全天、跨天和没写时间的。排版和拖动的计算都在 week.js，这里只管画和接线。
+// 拖动的接线在后面“周视图：拖动”一节。
+
+const WV = { key: '', sel: null, set: 0 }; // 现在画的是哪一周、上一次选中的是谁、上一次自动滚到的位置
+
+// 正在问范围的那一项，先按还没定下来的改动来画：拖到哪就画在哪，选了范围才算数，不选就弹回去
+const viewOf = (it) => (S.ask && S.ask.mode === 'edit' && S.ask.id === it.id ? Object.assign({}, it, S.ask.patch) : it);
+const blockOf = (id, zone) => Array.prototype.find.call(document.querySelectorAll('#week .wk-it'), (el) => el.dataset.id === id && (!zone || el.dataset.zone === zone)) || null;
+const num2 = (n) => String(Math.round(n * 100) / 100);
+const setText = (el, text) => { if (el && el.textContent !== text) el.textContent = text; }; // 没变就不碰，拖的时候每一下移动都会来
+
+function chipHtml(it) {
+  const todo = it.kind === 'todo';
+  const title = it.title || '未命名';
+  const cls = ['wk-it', 'wk-chip'];
+  if (todo) cls.push('todo');
+  if (it.done) cls.push('done');
+  if (it.id === S.sel) cls.push('sel');
+  if (isLocked(it)) cls.push('wk-ro');
+  const when = todo ? (it.due ? '，' + it.due + ' 截止' : '') : (it.allDay ? '，全天' : it.start ? '，' + it.start : '');
+  return '<button type="button" class="' + cls.join(' ') + '" data-act="open" data-id="' + esc(it.id) + '" data-zone="allday" data-date="' + it.date + '"' + color(it.color)
+    + ' aria-label="' + esc((todo ? '待办：' : '') + title + when) + '">'
+    + (todo ? '<i class="wk-o"></i><span class="n">' + esc(title) + '</span>'
+      : '<i class="bar"></i><span class="n">' + esc(title) + '</span><span class="t">' + esc(it.allDay ? '' : it.start || '') + '</span>')
+    + '</button>';
+}
+
+function weekColHtml(c, t) {
+  const rs = c.timed.map((e) => ({ e: e, r: Week.rangeOf(e) }));
+  const lay = Week.layout(rs.map((x) => ({ id: x.e.id, start: x.r.start, end: x.r.end })));
+  let html = '<div class="week-col' + (c.key === t ? ' today' : '') + '" data-date="' + c.key + '">';
+  rs.forEach((x) => {
+    const e = x.e;
+    const p = Week.place(x.r, lay[e.id]);
+    const tall = p.height >= 38;
+    const ln = Math.max(1, Math.min(4, Math.floor((p.height - (tall ? 20 : 4)) / 14)));
+    const time = e.start + (e.end ? '–' + e.end : '');
+    const cv = /^#[0-9a-f]{6}$/i.test(e.color || '') ? ';--c:' + e.color : '';
+    html += '<button type="button" class="wk-it wk-ev' + (tall ? '' : ' short') + (e.id === S.sel ? ' sel' : '') + '" data-act="open" data-id="' + esc(e.id) + '" data-zone="time" data-date="' + c.key + '"'
+      + ' style="top:' + num2(p.top) + 'px;height:' + num2(p.height) + 'px;left:calc(' + num2(p.left) + '% + 1px);width:calc(' + num2(p.width) + '% - 2px);--ln:' + ln + cv + '"'
+      + ' aria-label="' + esc((e.title || '未命名') + '，' + time) + '">'
+      + '<span class="wk-t">' + esc(e.title || '未命名') + '</span><span class="wk-time">' + esc(time) + '</span><span class="wk-grip"></span></button>';
+  });
+  // 有具体时间的待办：时间轴上的小标记，靠列的右边，几个挤在一起就并排
+  const ms = c.marks.map((m) => ({ m: m, s: Week.toMin(m.due) }));
+  const ml = Week.layout(ms.map((x) => ({ id: x.m.id, start: x.s, end: x.s + 20 })));
+  ms.forEach((x) => {
+    const m = x.m;
+    const l = ml[m.id];
+    html += '<button type="button" class="wk-it wk-mark' + (m.done ? ' done' : '') + (m.id === S.sel ? ' sel' : '') + '" data-act="open" data-id="' + esc(m.id) + '" data-zone="mark" data-date="' + c.key + '"'
+      + ' style="top:' + num2(Week.minToY(x.s)) + 'px;left:calc(38% + ' + num2((l.col / l.cols) * 62) + '%);width:calc(' + num2(62 / l.cols) + '% - 1px)"'
+      + ' aria-label="' + esc('待办：' + (m.title || '未命名') + '，' + m.due + ' 截止') + '"><i class="wk-o"></i><span class="wk-tt">' + esc(m.title || '未命名') + '</span></button>';
+  });
+  if (c.key === t) html += '<div class="wk-now" style="top:' + num2(Week.minToY(nowMin())) + 'px"></div>';
+  return html + '</div>';
+}
+
+// 重画前后各量一次每一块的位置，位置变了的从原来的地方滑过去（取消、弹回、同一时段的几块重新排开都走这里）
+function weekRects() {
+  const out = {};
+  document.querySelectorAll('#week .wk-it').forEach((el) => { const r = el.getBoundingClientRect(); out[el.dataset.zone + '|' + el.dataset.id] = [r.left, r.top]; });
+  return out;
+}
+
+function weekFlip(before) {
+  const moved = [];
+  document.querySelectorAll('#week .wk-it').forEach((el) => {
+    const b = before[el.dataset.zone + '|' + el.dataset.id];
+    if (!b) return;
+    const r = el.getBoundingClientRect();
+    const dx = b[0] - r.left;
+    const dy = b[1] - r.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    el.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    moved.push(el);
+  });
+  if (!moved.length) return;
+  void document.body.offsetWidth;
+  moved.forEach((el) => { el.classList.add('settling'); el.style.transform = ''; });
+  setTimeout(() => moved.forEach((el) => el.classList.remove('settling')), 320);
+}
+
+// 打开 / 换到另一周时自动滚：本周有今天看现在，否则看选中那天的第一个日程，再没有看这一周最早的
+function weekScroll(cols, keys) {
+  const body = $('week-body');
+  const starts = (c) => c.timed.map((e) => Week.rangeOf(e).start);
+  const today0 = keys.indexOf(today()) >= 0 ? nowMin() : null;
+  const day = cols[Math.max(0, keys.indexOf(S.date))];
+  const mine = starts(day);
+  const all = [].concat.apply([], cols.map(starts));
+  const first = mine.length ? Math.min.apply(null, mine) : all.length ? Math.min.apply(null, all) : null;
+  body.scrollTop = Week.scrollTop({ now: today0, first: first, hourPx: Week.HOUR_PX });
+  WV.set = body.scrollTop;
+}
+
+function renderWeek() {
+  if (!(S.big && S.week)) {
+    if (drag) cancelDrag();
+    WV.key = '';
+    return;
+  }
+  if (drag) { drag.stale = true; return; } // 按下之后到松手之前不重画（20 秒一次的刷新、同步完成都会走到这里），松手后补一次
+  const keys = Week.weekKeys(S.date);
+  const t = today();
+  const cols = keys.map((k) => ({ key: k, timed: [], marks: [], top: [] }));
+  allItems().map(viewOf).forEach((it) => {
+    if (it.date < keys[0] || it.date > keys[6]) return;
+    const c = cols[keys.indexOf(it.date)];
+    if (!c) return;
+    if (it.kind === 'event') {
+      if (!it.parts && Week.rangeOf(it)) c.timed.push(it); else c.top.push(it); // 全天、没写时间、跨天的放顶部
+    } else if (Week.toMin(it.due) !== null) c.marks.push(it);
+    else c.top.push(it);
+  });
+
+  const head = '<div></div>' + cols.map((c) => {
+    const d = fromIso(c.key);
+    const z = lunarOf(c.key);
+    const say = lunarSay(z);
+    const evN = c.timed.length + c.top.filter((x) => x.kind === 'event').length;
+    const tdN = c.marks.concat(c.top).filter((x) => x.kind === 'todo' && !x.done).length;
+    const label = (d.getMonth() + 1) + '月' + d.getDate() + '日 周' + WK.charAt(d.getDay()) + '，' + (say ? say + '，' : '') + evN + ' 个日程，' + tdN + ' 个待办';
+    return '<button type="button" class="wk-day tap' + (c.key === t ? ' today' : '') + (c.key === S.date ? ' sel' : '') + '" data-act="week-day" data-date="' + c.key + '" aria-label="' + esc(label) + '">'
+      + '<span class="wk-r1"><span>周' + WK.charAt(d.getDay()) + '</span>' + holHtml(z) + '</span>'
+      + '<span class="wk-r2"><span class="wk-num">' + d.getDate() + '</span>' + lzHtml(z) + '</span></button>';
+  }).join('');
+
+  const top = '<div class="wk-lab">全天</div>' + cols.map((c) => {
+    const evs = sortEvents(c.top);
+    const tds = orderTodos(c.top);
+    return '<div class="wk-ad' + (c.key === t ? ' today' : '') + '" data-date="' + c.key + '">' + evs.concat(tds).map(chipHtml).join('') + '</div>';
+  }).join('');
+
+  let hours = '<div class="wk-hours">';
+  for (let h = 1; h < 24; h += 1) hours += '<span class="wk-hr" style="top:' + h * Week.HOUR_PX + 'px">' + pad(h) + ':00</span>';
+  const body = hours + '</div>' + cols.map((c) => weekColHtml(c, t)).join('');
+
+  const fresh = WV.key !== keys[0];
+  const changed = $('week-head')._html !== head || $('week-allday')._html !== top || $('week-inner')._html !== body;
+  const before = changed && !fresh ? weekRects() : null;
+  setHtml($('week-head'), head);
+  setHtml($('week-allday'), top);
+  setHtml($('week-inner'), body);
+  if (before) weekFlip(before);
+  if (fresh) {
+    WV.key = keys[0];
+    weekScroll(cols, keys);
+    // 刚展开时外壳还在变高，量到的可视高度不是最后的，等动画走完再对一次（期间没被手动滚过才对）
+    setTimeout(() => { if (WV.key === keys[0] && Math.abs($('week-body').scrollTop - WV.set) <= 2) weekScroll(cols, keys); }, 580);
+  }
+  if (S.sel !== WV.sel) {
+    WV.sel = S.sel;
+    const el = S.sel ? $('week-inner').querySelector('.wk-it.sel') : null;
+    if (el) {
+      // 刚选中的那一块不在可视范围里：滚到中间
+      const b = $('week-body');
+      const br = b.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      if (r.top < br.top || r.bottom > br.bottom) b.scrollTop += r.top - br.top - (br.height - r.height) / 2;
+    }
+  }
+}
+
+// ---------- 周视图：拖动 ----------
+// 按下 → 挪过 4 像素才算拖起来（没拖起来就是普通的点击）→ 整块用 transform 跟着指针走，一格一格吸附，不重画 → 松手。
+// 松手后的改动走和详情里一样的 change()：重复日程问“仅此次 / 此次及以后 / 全部”，iCloud 的走原来的上传和重试。
+// 计算（挪到哪、拉到哪、能不能挪）都在 week.js；这里只量指针、动一块的 transform、把结果交给 change()。
+
+let drag = null;          // { op: 'move' | 'resize' | 'create', el, id, zone, pid, x0, y0, ... }
+let swallowClick = false; // 拖完松手时浏览器还会补一个 click，吞掉它，免得又“点开”了一次
+let holdTimer = null;
+const DRAG_PX = 4;
+
+// 告诉 Rust：拖动中，指针出了小组件也别穿透。按下报一次，拖着时每 5 秒续一次（Rust 那边 30 秒没续就自己放开），松开解除。
+function holdHit(on) {
+  clearInterval(holdTimer);
+  holdTimer = null;
+  call('set_hit_hold', { hold: on }).catch(() => {});
+  if (on) holdTimer = setInterval(() => call('set_hit_hold', { hold: true }).catch(() => {}), 5000);
+}
+
+function weekDown(e) {
+  if (e.button !== 0 || e.isPrimary === false || drag || !(e.target instanceof Element)) return;
+  let blk = e.target.closest('.wk-it');
+  let col = blk ? null : e.target.closest('.week-col');
+  if (!blk && !col) return;
+  const grip = !!(blk && e.target.closest('.wk-grip'));
+  const key = blk ? { id: blk.dataset.id, zone: blk.dataset.zone } : null;
+  const date = (blk || col).dataset.date;
+  // 还在问范围的时候又按下别处：刚才的改动不算，弹回去
+  if (S.ask) {
+    cancelAsk();
+    if (key) blk = blockOf(key.id, key.zone);
+    else col = $('week-inner').querySelector('.week-col[data-date="' + date + '"]');
+    if (!blk && !col) return;
+  }
+  const cols = $('week-inner').querySelectorAll('.week-col');
+  if (cols.length < 2) return;
+  const c0 = cols[0].getBoundingClientRect();
+  const stride = cols[1].getBoundingClientRect().left - c0.left;
+  const keys = Week.weekKeys(S.date);
+  const el = blk || col;
+  const base = blk ? find(blk.dataset.id) : null;
+  if (blk && !base) return;
+  drag = {
+    op: grip ? 'resize' : blk ? 'move' : 'create',
+    el: el, id: blk ? blk.dataset.id : '', zone: blk ? blk.dataset.zone : 'time', date: date, base: base,
+    pid: e.pointerId, x0: e.clientX, y0: e.clientY, cx: e.clientX, cy: e.clientY, sc0: $('week-body').scrollTop,
+    geo: { left: c0.left, stride: stride }, col0: Math.max(0, keys.indexOf(date)),
+    active: false, stale: false, raf: 0, dMin: 0, dDays: 0, h0: blk ? blk.style.height : '',
+    m0: blk ? 0 : Week.yToMin(e.clientY - $('week-inner').getBoundingClientRect().top),
+  };
+  drag.m1 = drag.m0;
+  holdHit(true);
+  try { el.setPointerCapture(e.pointerId); } catch (err) { /* 抓不到也能拖，只是指针出了这一块就收不到移动了 */ }
+}
+
+function weekMove(e) {
+  const d = drag;
+  if (!d || e.pointerId !== d.pid) return;
+  d.cx = e.clientX;
+  d.cy = e.clientY;
+  if (!d.active) {
+    if (Math.hypot(d.cx - d.x0, d.cy - d.y0) < DRAG_PX) return;
+    d.active = true;
+    hideTip();
+    $('week').classList.add(d.op === 'resize' ? 'sizing' : 'moving');
+    if (d.op === 'create') {
+      d.ghost = document.createElement('div');
+      d.ghost.className = 'wk-ghost';
+      d.el.appendChild(d.ghost);
+    } else {
+      d.el.classList.remove('settling');
+      d.el.classList.add('dragging');
+    }
+  }
+  weekUpdate();
+  if (!d.raf) d.raf = requestAnimationFrame(weekAuto);
+}
+
+// 按指针现在的位置，算出这一块该在哪，只改它自己的 transform / height
+function weekUpdate() {
+  const d = drag;
+  const body = $('week-body');
+  const dMin = Week.yToMin(d.cy - d.y0 + body.scrollTop - d.sc0);
+  if (d.op === 'create') {
+    d.m1 = Week.yToMin(d.cy - $('week-inner').getBoundingClientRect().top);
+    d.range = Week.createRange(d.date, d.m0, d.m1);
+    const s0 = Week.toMin(d.range.start);
+    d.ghost.style.top = num2(Week.minToY(s0)) + 'px';
+    d.ghost.style.height = num2(Week.minToY(Week.toMin(d.range.end) - s0)) + 'px';
+    setText(d.ghost, d.range.start + '–' + d.range.end);
+    return;
+  }
+  const it = d.base;
+  const time = d.el.querySelector('.wk-time');
+  if (d.op === 'resize') {
+    const rg = Week.rangeOf(it);
+    const r = Week.resizeEnd(it, dMin);
+    const end = r && Week.toMin(r.end) !== null ? Week.toMin(r.end) : rg.end;
+    d.dMin = dMin;
+    d.el.style.height = num2(Week.place({ start: rg.start, end: end }).height) + 'px';
+    setText(time, it.start + '–' + Week.fromMin(end));
+    return;
+  }
+  d.dDays = Week.colAt(d.cx, d.geo.left, d.geo.stride, 7) - d.col0;
+  d.dMin = dMin;
+  let ty = 0;
+  if (d.zone === 'time') {
+    const r = Week.moveTimed(it, dMin, d.dDays);
+    ty = Week.minToY(Week.toMin(r.start) - Week.toMin(it.start));
+    setText(time, r.start + (r.end ? '–' + r.end : ''));
+  }
+  d.el.style.transform = 'translate(' + d.dDays * d.geo.stride + 'px,' + num2(ty) + 'px)';
+}
+
+// 指针靠近时间轴的上下边就自己往那边滚，滚了再重新算一次
+function weekAuto() {
+  const d = drag;
+  if (!d) return;
+  d.raf = 0;
+  if (!d.active || (d.op === 'move' && d.zone !== 'time')) return;
+  const body = $('week-body');
+  const r = body.getBoundingClientRect();
+  const edge = 28;
+  let v = 0;
+  if (d.cy < r.top + edge) v = -Math.ceil((r.top + edge - d.cy) / 3);
+  else if (d.cy > r.bottom - edge) v = Math.ceil((d.cy - (r.bottom - edge)) / 3);
+  v = Math.max(-16, Math.min(16, v));
+  if (!v) return;
+  const before = body.scrollTop;
+  body.scrollTop = before + v;
+  if (body.scrollTop === before) return;
+  weekUpdate();
+  d.raf = requestAnimationFrame(weekAuto);
+}
+
+// 回到原位：transform / height 慢慢归零（没被重画替换掉的那一块自己滑回去；被替换的由 weekFlip 滑）
+function settleBack(d) {
+  const el = d.el;
+  if (!el || !el.isConnected || d.op === 'create') return;
+  el.classList.remove('dragging');
+  el.classList.add('settling');
+  el.style.transform = '';
+  if (d.op === 'resize') el.style.height = d.h0;
+  const time = el.querySelector('.wk-time');
+  const it = d.base;
+  if (it) setText(time, it.start + (it.end ? '–' + it.end : ''));
+  setTimeout(() => el.classList.remove('settling'), 320);
+}
+
+function endDrag() {
+  const d = drag;
+  if (d.raf) cancelAnimationFrame(d.raf);
+  drag = null;
+  holdHit(false);
+  $('week').classList.remove('moving', 'sizing');
+  try { d.el.releasePointerCapture(d.pid); } catch (err) { /* 已经松开了 */ }
+  return d;
+}
+
+// Esc、窗口失焦、系统打断：这次拖动不算，回原位
+function cancelDrag() {
+  if (!drag) return;
+  const d = endDrag();
+  if (d.ghost) d.ghost.remove();
+  settleBack(d);
+  if (d.stale) render();
+}
+
+function weekUp(e) {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const d = endDrag();
+  if (!d.active) { if (d.stale) render(); return; } // 没拖起来：就是一次普通的点击，click 会照常打开详情
+  swallowClick = true;
+  setTimeout(() => { swallowClick = false; }, 60);
+
+  if (d.op === 'create') {
+    d.ghost.remove();
+    const r = d.range || Week.createRange(d.date, d.m0, d.m1);
+    const day = fromIso(r.date);
+    S.date = r.date;
+    S.vm = { y: day.getFullYear(), m: day.getMonth() };
+    addItem('event', { date: r.date, start: r.start, end: r.end }, true); // 新建并立刻进入标题输入
+    return;
+  }
+
+  const it = find(d.id);
+  if (!it) { settleBack(d); render(); return; }
+  const res = Week.drop(d.op, it, { dMin: d.dMin, dDays: d.dDays });
+  if (res.reason === 'none') { settleBack(d); if (d.stale) render(); return; }
+  if (res.reason === 'locked') {
+    // 跨天的 iCloud 日程在今笺里只读：弹回原位，并打开详情，那里已经写着“跨天日程，请在 Apple 日历里修改”
+    if (S.sel !== it.id || S.panel !== 'detail') openDetail(it.id, false); else render();
+    settleBack(d);
+    return;
+  }
+
+  // 重复日程的某一场：先选中它、打开详情，问范围的小气泡要有地方贴
+  if (seriesOf(it) && (S.sel !== it.id || S.panel !== 'detail')) {
+    setSel(it.id);
+    S.panel = 'detail';
+    S.pop = null;
+    fillPanel(it);
+  }
+  const done = change(it, res.patch, null);
+  if (!done && S.ask) {
+    S.ask.drag = true;
+    fillPanel(selView() || it);
+  } else if (S.panel === 'detail' && find(S.sel)) fillPanel(find(S.sel));
+  render();
+  setTimeout(uploadPending, 0);
+}
+
+// 问范围时选了置灰的那一项（iCloud 系列的“此次及以后”、按“全部”改时间）：弹回原位，提示还是置灰按钮上那句
+function rejectDrag(btn) {
+  if (btn && btn.dataset.tip) {
+    // 按钮马上跟着小气泡一起消失，提示自己留两秒多
+    showTip(btn);
+    clearTimeout(tipTimer);
+    tipPin = Date.now() + 2400;
+    tipTimer = setTimeout(() => { tipPin = 0; hideTip(); }, 2400);
+  }
+  cancelAsk();
+}
+
+// 详情气泡贴在周视图里被选中的那一块旁边
+function weekAnchor() {
+  const el = $('week').querySelector('.wk-it.sel');
+  if (!el) return null;
+  const col = el.closest('.week-col, .wk-ad');
+  const view = (el.dataset.zone === 'allday' ? $('week-allday') : $('week-body')).getBoundingClientRect();
+  return { el: el, col: col, view: view };
 }
 
 function renderPop(map) {
@@ -997,7 +1411,8 @@ function positionPanel() {
   const h = panel.offsetHeight;
   const bigH = Math.min(640, parseFloat(getComputedStyle(root).getPropertyValue('--shell-h')) || 864); // 和 applyMode 里一致
   const grid = $('big-grid');
-  const anchor = grid.querySelector('.line.sel') || (find(S.sel) ? grid.querySelector('.cell[data-date="' + find(S.sel).date + '"] .num') : null);
+  const wa = S.week ? weekAnchor() : null;
+  const anchor = S.week ? (wa && wa.el) : grid.querySelector('.line.sel') || (find(S.sel) ? grid.querySelector('.cell[data-date="' + find(S.sel).date + '"] .num') : null);
   const shellRight = window.innerWidth - 24;
   const shellLeft = shellRight - 768;
   if (!anchor) {
@@ -1007,8 +1422,9 @@ function positionPanel() {
     return;
   }
   const a = anchor.getBoundingClientRect();
-  const cell = anchor.closest('.cell').getBoundingClientRect();
-  const ay = a.top + a.height / 2;
+  const cell = (wa ? wa.col : anchor.closest('.cell')).getBoundingClientRect();
+  // 周视图里那一块可能滚出了可视范围：气泡贴在可视范围的边上
+  const ay = wa ? Math.max(wa.view.top + 12, Math.min(wa.view.bottom - 12, a.top + a.height / 2)) : a.top + a.height / 2;
   const onRight = cell.left + cell.width / 2 < shellLeft + 768 * 0.55;
   const left = onRight ? cell.right + 12 : cell.left - 12 - W;
   const top = Math.max(36, Math.min(24 + bigH - 12 - h, ay - 56));
@@ -1033,6 +1449,7 @@ function render() {
   renderDay(map, info);
   renderCal(map, month);
   renderBig(map, month);
+  renderWeek();
   renderCompact(map, info);
   renderCountdowns();
   applyMode();
@@ -1215,7 +1632,7 @@ function fillPanel(it) {
     pick.value = it.cal || '';
   }
   $('p-ro').hidden = !locked;
-  $('p-ro').textContent = '跨天日程，请在 Apple 日历里修改';
+  $('p-ro').textContent = TIP_RO;
   resetDelete();
   $('p-del').hidden = locked;
   $('p-allday').hidden = isTodo;
@@ -1294,6 +1711,9 @@ function change(it, p, anchor) {
   return true;
 }
 
+// iCloud 的重复日程里做不了的：“此次及以后”的修改、按“全部”改时间 / 日期（详情里置灰；周视图里拖动也走这一条）
+const scopeOff = (it, a, scope) => !!a && a.mode === 'edit' && seriesOf(it) === 'remote' && (scope === 'future' || (scope === 'all' && hasTime(a.patch || {})));
+
 // 问范围的小气泡：贴在刚改的那一项下面（放不下就放上面），不说明、不遮详情的其余部分
 function renderScope() {
   const box = $('scope');
@@ -1309,9 +1729,8 @@ function renderScope() {
   box.setAttribute('aria-label', a.mode === 'del' ? '删除哪几次' : '修改哪几次');
   // iCloud 的重复日程：“此次及以后”的修改、改全部的时间，这里不做
   const cur = find(a.id);
-  const remote = seriesOf(cur) === 'remote' && a.mode === 'edit';
   box.querySelectorAll('button').forEach((b) => {
-    const off = remote && (b.dataset.v === 'future' || (b.dataset.v === 'all' && hasTime(a.patch || {})));
+    const off = scopeOff(cur, a, b.dataset.v);
     if (off) { b.setAttribute('aria-disabled', 'true'); b.dataset.tip = '这一项请在 Apple 日历里改'; } else { b.removeAttribute('aria-disabled'); delete b.dataset.tip; }
   });
   const panel = $('panel');
@@ -1330,7 +1749,11 @@ function renderScope() {
 }
 
 function resolveAsk(scope, btn) {
-  if (btn && btn.getAttribute('aria-disabled') === 'true') return;
+  if (btn && btn.getAttribute('aria-disabled') === 'true') {
+    // 周视图里拖出来的改动选了做不了的那一项：弹回原位，提示还是详情里那句
+    if (S.ask && S.ask.drag) rejectDrag(btn);
+    return;
+  }
   const a = S.ask;
   S.ask = null;
   const it = a ? find(a.id) : null;
@@ -1778,11 +2201,13 @@ function fromCapture(p) {
 let tipTimer = null;
 let tipFor = null;
 let tipMute = null; // 刚点过的按钮：鼠标离开之前不再弹它的名字
+let tipPin = 0;     // 这个时刻之前不收：主动弹出来的提示（按钮随后就消失了）要留一会儿
 
 function showTip(el) {
   const text = el.dataset.tip;
   const tip = $('tip');
   if (!text || !el.isConnected) return;
+  tipPin = 0;
   tipFor = el;
   tip.textContent = text;
   tip.hidden = false;
@@ -1798,6 +2223,7 @@ function showTip(el) {
 }
 
 function hideTip() {
+  if (Date.now() < tipPin) return;
   clearTimeout(tipTimer);
   tipFor = null;
   $('tip').classList.remove('on');
@@ -1832,6 +2258,16 @@ function bindTips() {
 }
 
 // ---------- 事件 ----------
+
+function shiftWeek(step) {
+  S.date = Week.addDays(S.date, 7 * step);
+  const d = fromIso(S.date);
+  S.vm = { y: d.getFullYear(), m: d.getMonth() };
+  S.pop = null;
+  setSel(null);
+  S.panel = '';
+  replay($('week'), 'fade');
+}
 
 function shiftMonth(step) {
   const d = new Date(S.vm.y, S.vm.m + step, 1);
@@ -1917,8 +2353,27 @@ function onAct(act, t) {
     case 'big-close': S.big = false; S.mode = S.prevMode || 'day'; S.pop = null; break;
     case 'hit': case 'hit-note': openHit(Number(t.dataset.i)); return;
     case 'search-close': closeSearch(true); return;
-    case 'prev-month': shiftMonth(-1); break;
-    case 'next-month': shiftMonth(1); break;
+    case 'prev-month': if (S.week) shiftWeek(-1); else shiftMonth(-1); break;
+    case 'next-month': if (S.week) shiftWeek(1); else shiftMonth(1); break;
+    case 'big-view': {
+      const wk = t.dataset.v === 'week';
+      if (wk === S.week) return;
+      setSel(null);
+      S.panel = '';
+      S.pop = null;
+      if (wk) S.date = Week.anchor(S.vm, S.date, today());
+      else { const d = fromIso(S.date); S.vm = { y: d.getFullYear(), m: d.getMonth() }; }
+      S.week = wk;
+      replay($(wk ? 'week' : 'month-wrap'), 'fade');
+      break;
+    }
+    case 'week-day': {
+      const d = fromIso(date);
+      S.date = date;
+      S.vm = { y: d.getFullYear(), m: d.getMonth() };
+      S.nav = false;
+      break;
+    }
     case 'go-today': {
       const d = new Date();
       if (S.date !== today()) { replay($('events'), 'swap'); replay($('todos'), 'swap'); }
@@ -2115,6 +2570,19 @@ function bind() {
     if (!downBlank || !isBlank(e)) return;
     if (S.pop) { S.pop = null; render(); } else if (S.panel) closePanels();
   });
+  // 周视图：拖动
+  const wkEl = $('week');
+  wkEl.addEventListener('pointerdown', weekDown);
+  wkEl.addEventListener('pointermove', weekMove);
+  wkEl.addEventListener('pointerup', weekUp);
+  wkEl.addEventListener('pointercancel', cancelDrag);
+  wkEl.addEventListener('click', (e) => { if (swallowClick) { swallowClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
+  window.addEventListener('blur', cancelDrag);
+  let scrollRaf = 0;
+  $('week-body').addEventListener('scroll', () => {
+    if (scrollRaf || !S.big || !S.week || S.panel !== 'detail') return;
+    scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; positionPanel(); });
+  });
   $('toast-btn').addEventListener('click', () => {
     const action = toastAction;
     hideToast();
@@ -2127,6 +2595,7 @@ function bind() {
     // Ctrl + F：只在小组件有焦点时生效，不注册系统级快捷键；顺便挡掉浏览器自己的查找条
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); openSearch(); return; }
     if (e.key !== 'Escape') return;
+    if (drag) { cancelDrag(); return; }
     if (S.ask) { cancelAsk(); return; }
     if (S.search) { closeSearch(true); return; }
     if (S.pop) { S.pop = null; render(); return; }

@@ -214,8 +214,8 @@ h2, .h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; color: rgb(
 .swatch { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--cm); }
 
 /* 日历自带的颜色（比如亮黄）在浅底上太淡，深色字时压暗一些再用。 */
-.ev, .line, .prow, .swatch { --cm: var(--c, var(--accent)); }
-[data-ink="dark"] .ev, [data-ink="dark"] .line, [data-ink="dark"] .prow, [data-ink="dark"] .swatch { --cm: color-mix(in srgb, var(--c, var(--accent)) 72%, var(--deep)); }
+.ev, .line, .prow, .swatch, .wk-it { --cm: var(--c, var(--accent)); }
+[data-ink="dark"] .ev, [data-ink="dark"] .line, [data-ink="dark"] .prow, [data-ink="dark"] .swatch, [data-ink="dark"] .wk-it { --cm: color-mix(in srgb, var(--c, var(--accent)) 72%, var(--deep)); }
 
 input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--solid); }
 
@@ -260,7 +260,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* 实心的小块（选中的按钮、弹出的小窗）自己有底色，不需要文字描边。 */
 .pill.solid, .pill.accent, .seg button[aria-pressed="true"], .icon[aria-pressed="true"], .quick-btn,
-.cday.sel, .num.today, .line.sel, #pop, .tip, .toast, #panel.bubble, .del.confirm,
+.cday.sel, .num.today, .line.sel, .wk-day.today .wk-num, .wk-ev.sel, .wk-chip.sel, .wk-mark, .wk-ghost, #pop, .tip, .toast, #panel.bubble, .del.confirm,
 #p-done[aria-pressed="true"], #p-allday[aria-pressed="true"] { text-shadow: none; }
 /* 图标不吃文字描边，玻璃很透时单独垫一层影子。 */
 .bare .icon svg, .bare .box, .bare .help, .bare .row-star svg, .bare .chev { filter: drop-shadow(0 0 3px rgb(var(--shade) / calc(0.75 * var(--halo)))); }
@@ -583,6 +583,84 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .line .t { font-size: 10px; opacity: 0.82; font-variant-numeric: tabular-nums; }
 .line.more i { background: transparent; }
 .line.sel, .cell.out .line.sel { background-color: var(--c, var(--accent)); color: #1b1408; }
+
+/* ---------- 周视图：和月视图是同一块玻璃、同样大小，里面换成七列加时间轴 ---------- */
+
+.big-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg.mini { flex: none; gap: 2px; padding: 2px; border-radius: 15px; }
+.seg.mini button { height: 26px; padding: 0 11px; border-radius: 13px; font-size: 12px; }
+
+.wkv { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.week-head, .week-allday, .week-inner { display: grid; grid-template-columns: 40px repeat(7, minmax(0, 1fr)); column-gap: 4px; }
+/* 三块都一直留着滚动条的位置（表头那条画成透明的），七列才上下对得齐 */
+.week-head, .week-allday, .week-body { overflow-x: hidden; overflow-y: scroll; }
+.week-head { flex-shrink: 0; height: 46px; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.week-allday { flex-shrink: 0; align-items: start; min-height: 26px; max-height: 66px; }
+.week-body { position: relative; flex: 1 1 0; min-height: 0; border-radius: 10px; }
+.week-inner { position: relative; height: 1152px; grid-template-rows: minmax(0, 1fr); }
+
+.wk-day { min-width: 0; height: 46px; display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 0 6px 0 8px; border-radius: 12px; border: 1px solid transparent; background-color: var(--cell); text-align: left; }
+.wk-day.sel { border-color: rgb(var(--fg) / 0.55); background-color: var(--cell-sel); }
+.wk-r1 { display: flex; align-items: center; gap: 4px; height: 16px; font-size: 12px; color: rgb(var(--fg) / 0.86); }
+.wk-r1 .hol { margin-left: auto; }
+.wk-day.today .wk-r1 { color: var(--accent-ink); font-weight: 700; }
+.wk-r2 { display: flex; align-items: center; gap: 4px; height: 22px; min-width: 0; }
+.wk-num { flex: none; min-width: 22px; height: 22px; padding: 0 4px; border-radius: 11px; font-size: 14px; font-weight: 700; line-height: 22px; text-align: center; font-variant-numeric: tabular-nums; }
+.wk-day.today .wk-num { background: var(--accent); color: var(--on-accent); font-weight: 800; }
+.wk-r2 .lz { min-width: 0; height: 22px; overflow: hidden; text-overflow: ellipsis; line-height: 22px; }
+
+.wk-lab { padding: 4px 4px 0 0; font-size: 11px; line-height: 18px; text-align: right; color: rgb(var(--fg) / 0.86); }
+.wk-ad { min-width: 0; display: flex; flex-direction: column; gap: 2px; min-height: 22px; padding: 2px 0; border-radius: 10px; }
+.wk-ad.today, .week-col.today { background-color: rgb(var(--accent-rgb) / 0.12); }
+
+.wk-hours { position: relative; }
+.wk-hr { position: absolute; right: 4px; font-size: 11px; line-height: 14px; margin-top: -7px; color: rgb(var(--fg) / 0.8); font-variant-numeric: tabular-nums; }
+.week-col { position: relative; min-width: 0; border-radius: 10px; background-color: var(--cell); background-image: linear-gradient(to bottom, rgb(var(--fg) / 0.12) 1px, transparent 1px); background-size: 100% 48px; }
+
+.wk-it { touch-action: none; }
+.wk-ev { position: absolute; z-index: 1; display: flex; flex-direction: column; overflow: hidden; padding: 2px 4px 2px 7px; border-radius: 7px; background-color: color-mix(in srgb, var(--cm) 30%, transparent); font-size: 11px; line-height: 14px; text-align: left; cursor: grab; transition: background-color 0.2s ease; }
+.wk-ev::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--cm); }
+.wk-ev:hover { background-color: color-mix(in srgb, var(--cm) 44%, transparent); }
+.wk-ev.sel { background-color: var(--c, var(--accent)); color: #1b1408; }
+.wk-ev.sel::before { background: rgb(27 20 8 / 0.35); }
+.wk-t { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ln, 1); font-weight: 600; word-break: break-all; }
+.wk-time { font-size: 10px; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wk-ev.short { flex-direction: row; align-items: center; gap: 4px; padding-top: 0; padding-bottom: 0; }
+.wk-ev.short .wk-t { -webkit-line-clamp: 1; flex: 1 1 0; min-width: 0; }
+.wk-ev.short .wk-time { display: none; }
+.wk-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
+.wk-grip::after { content: ""; position: absolute; left: 50%; bottom: 2px; width: 16px; height: 2px; margin-left: -8px; border-radius: 1px; background: currentColor; opacity: 0; transition: opacity 0.2s ease; }
+.wk-ev:hover .wk-grip::after, .wk-ev.dragging .wk-grip::after { opacity: 0.55; }
+.wk-ro { cursor: pointer; }
+
+.wk-chip { position: relative; flex-shrink: 0; display: grid; grid-template-columns: 3px minmax(0, 1fr) auto; align-items: center; column-gap: 4px; width: 100%; height: 18px; padding-right: 4px; border-radius: 6px; background-color: color-mix(in srgb, var(--cm) 30%, transparent); font-size: 11px; text-align: left; cursor: grab; transition: background-color 0.2s ease; }
+.wk-chip:hover { background-color: color-mix(in srgb, var(--cm) 44%, transparent); }
+.wk-chip .bar { align-self: stretch; border-radius: 3px 0 0 3px; background: var(--cm); }
+.wk-chip .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.wk-chip .t { font-size: 10px; opacity: 0.85; font-variant-numeric: tabular-nums; }
+.wk-chip.todo { grid-template-columns: 12px minmax(0, 1fr); padding-left: 4px; background-color: rgb(var(--fg) / 0.1); }
+.wk-chip.todo:hover { background-color: rgb(var(--fg) / 0.18); }
+.wk-chip.sel { background-color: var(--c, var(--accent)); color: #1b1408; }
+.wk-chip.todo.sel { background-color: var(--solid); color: var(--on-solid); }
+.wk-o { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; }
+.wk-it.done .wk-o { border-color: var(--mint); background: var(--mint); }
+.wk-it.done .n, .wk-it.done .wk-tt { text-decoration: line-through; opacity: 0.7; }
+
+.wk-mark { position: absolute; z-index: 2; display: flex; align-items: center; gap: 3px; height: 16px; min-width: 0; overflow: hidden; padding: 0 5px 0 4px; border-radius: 8px; border: 1px solid var(--pill-edge); background: var(--pop); font-size: 10px; font-weight: 600; white-space: nowrap; text-align: left; cursor: grab; }
+.wk-mark .wk-tt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wk-mark.sel { background: var(--solid); color: var(--on-solid); }
+
+.wk-now { position: absolute; left: 0; right: 0; z-index: 3; height: 2px; margin-top: -1px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+.wk-now::before { content: ""; position: absolute; left: -3px; top: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+.wk-ghost { position: absolute; left: 1px; right: 1px; z-index: 4; overflow: hidden; padding: 2px 6px; border-radius: 7px; border: 1.5px dashed var(--accent); background-color: color-mix(in srgb, var(--accent) 36%, transparent); font-size: 10px; line-height: 14px; font-variant-numeric: tabular-nums; pointer-events: none; }
+
+/* 拖动：整块用 transform 跟着指针走，不重画；松手后没生效的，transform 回到 0 就是“弹回原位” */
+.wk-it.dragging { z-index: 6; cursor: grabbing; box-shadow: 0 8px 20px rgb(var(--sh) / 0.4); transition: none; }
+.wk-ev.dragging .wk-time { display: block; }
+.wk-it.settling { transition: transform 0.28s var(--curve), height 0.28s var(--curve), box-shadow 0.28s var(--curve); }
+.wkv.moving, .wkv.moving * { cursor: grabbing !important; }
+.wkv.sizing, .wkv.sizing * { cursor: ns-resize !important; }
 
 #pop { position: absolute; z-index: 1; width: 264px; max-height: 300px; display: flex; flex-direction: column; gap: 2px; padding: 12px; border-radius: 22px; border: 1px solid var(--edge); background: var(--pop); box-shadow: inset 0 1px 0 var(--hi), 0 18px 44px rgb(var(--sh) / 0.5); }
 .pop-head { flex-shrink: 0; padding-left: 6px; }
