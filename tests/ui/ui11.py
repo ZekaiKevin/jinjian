@@ -145,16 +145,21 @@ with sync_playwright() as p:
     check('remote: toggle off clears it', ev('document.querySelectorAll("#countdowns .cd").length') == 0 and ev('document.getElementById("countdowns").hidden'))
     ev('closePanels()')
 
-    # ---- 7. 本机日程上传成 iCloud 日程时，倒数日标记跟着走 ----
-    pg, errs = page(items(False))
+    # ---- 7. 走真实流程：发现日历 → 选目标日历 → 本机日程上传 → 再同步一次，子任务和倒数日标记都还在 ----
+    local = items(False)
+    local[-1].update({'countdown': True, 'subs': [{'id': 's1', 'text': '带证件', 'done': False}]})  # plain
+    sync_on = {'on': True, 'user': 'me@icloud.com', 'cals': [], 'target': ''}
+    pg, errs = page(local)
     ev = lambda js: pg.evaluate(js)
-    ev('''(() => { const it = S.items.find(x => x.id === "plain"); it.countdown = true; it.cal = "https://p42-caldav.icloud.com.cn:443/123/calendars/home/";
-      S.settings.sync = { on: true, user: "me@icloud.com", cals: [{ href: it.cal, name: "个人", color: "#1BADF8", on: true }], target: it.cal }; render(); })()''')
-    ev('S.syncing = true')  # 挡住定时同步：这里只看上传那一步，不让模拟的服务器把条目换成别的地址形式
+    ev('S.settings.sync = %s; syncNow(true)' % json.dumps(sync_on)); pg.wait_for_timeout(1500)
+    ev('''(() => { const c = S.settings.sync.cals.find(c => c.name === "个人"); S.settings.sync.target = c.href; S.items.find(x => x.id === "plain").cal = c.href; })()''')
     ev('uploadPending()'); pg.wait_for_timeout(1200)
-    moved = ev('(() => { const k = Object.keys(S.extras).find(x => x.indexOf("r|") === 0); return [!!k, k ? !!S.extras[k].countdown : null, S.items.some(x => x.id === "plain")]; })()')
-    check('uploaded: flag carried into extras, local copy gone', moved == [True, True, False], moved)
-    check('uploaded: pill still shows', ev('document.querySelectorAll("#countdowns .cd").length') == 1, ev('document.getElementById("countdowns").textContent'))
+    mine = 'R.filter(x => x.title === "普通日程").map(x => [x.subs.length, !!x.countdown])'
+    check('uploaded: sub-task and flag carried, local copy gone', ev(mine) == [[1, True]] and not ev('S.items.some(x => x.id === "plain")'), ev(mine))
+    check('uploaded: pill shows', ev('[...document.querySelectorAll("#countdowns .cd")].some(x => x.textContent.indexOf("普通日程") >= 0)'))
+    ev('syncNow(false)'); pg.wait_for_timeout(1500)
+    check('after the next sync: still there (address form matches)', ev(mine) == [[1, True]], ev(mine))
+    check('after the next sync: pill still shows', ev('[...document.querySelectorAll("#countdowns .cd")].some(x => x.textContent.indexOf("普通日程") >= 0)'))
     check('no page errors', not errs, errs)
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED')
