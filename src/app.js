@@ -69,7 +69,7 @@ function replay(el, cls) {
 
 function defaults() {
   return {
-    theme: 'dark', tint: 50, blur: true, carry: true, autostart: false, top: false,
+    theme: 'dark', palette: 'indigo', tint: 50, blur: true, carry: true, autostart: false, top: false,
     fold: { ev: false, td: false, note: false }, // 日程、待办、便签各自是否折起来
     sync: { on: false, user: '', cals: [], target: '' },
   };
@@ -1011,6 +1011,9 @@ function luminance(rgb) {
 //   25 ~ 100 底色越来越实
 // 文字用浅色还是深色，不直接跟主题走，而是算一下“壁纸 + 玻璃”叠出来有多亮再定，
 // 这样浅色主题调得很透、壁纸又暗的时候，字不会变成深色压在深色上。
+// 各配色的玻璃底色：[深色, 浅色]
+const VEIL = { indigo: [[22, 18, 36], [250, 249, 253]], graphite: [[20, 22, 26], [246, 247, 249]] };
+
 function applyGlass() {
   const s = S.settings;
   const light = root.dataset.theme === 'light';
@@ -1024,7 +1027,7 @@ function applyGlass() {
   const halo = drawn ? 1 - glass : Math.max(0, Math.min(1, (0.7 - covered) / 0.7));
 
   const wall = wallRgb || [96, 96, 104]; // 不知道壁纸什么样，按偏暗的灰算
-  const veilRgb = light ? [250, 249, 253] : [22, 18, 36];
+  const veilRgb = (VEIL[root.dataset.palette] || VEIL.indigo)[light ? 1 : 0]; // 和 style.css 里各配色的 --bg 一致
   const boost = light && drawn ? 1.12 : 1;
   const lum = luminance(wall.map((c, i) => {
     const inner = Math.min(255, c * boost) * (1 - veil) + veilRgb[i] * veil;
@@ -1046,11 +1049,18 @@ function applySettings() {
   const s = S.settings;
   const light = s.theme === 'light' || (s.theme === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
   root.dataset.theme = light ? 'light' : 'dark';
+  root.dataset.palette = s.palette === 'graphite' ? 'graphite' : 'indigo';
   root.classList.toggle('no-blur', !s.blur);
   applyGlass();
-  // 快速记录窗口和这里是同一个来源，读得到这条
-  try { localStorage.setItem('jinjian-theme', root.dataset.theme); } catch (err) { /* 存不了就算了 */ }
-  if (TAURI && TAURI.event && TAURI.event.emit) TAURI.event.emit('theme', root.dataset.theme).catch(() => {});
+  // 快速记录窗口和这里是同一个来源，读得到这两条
+  try {
+    localStorage.setItem('jinjian-theme', root.dataset.theme);
+    localStorage.setItem('jinjian-palette', root.dataset.palette);
+  } catch (err) { /* 存不了就算了 */ }
+  if (TAURI && TAURI.event && TAURI.event.emit) {
+    TAURI.event.emit('theme', root.dataset.theme).catch(() => {});
+    TAURI.event.emit('palette', root.dataset.palette).catch(() => {});
+  }
 }
 
 function helpHtml(tip) {
@@ -1078,6 +1088,7 @@ function applyFold() {
 function fillSettings() {
   const s = S.settings;
   Array.prototype.forEach.call($('s-theme').children, (b) => b.setAttribute('aria-pressed', b.dataset.v === s.theme ? 'true' : 'false'));
+  Array.prototype.forEach.call($('s-palette').children, (b) => b.setAttribute('aria-pressed', b.dataset.v === (s.palette === 'graphite' ? 'graphite' : 'indigo') ? 'true' : 'false'));
   Array.prototype.forEach.call($('s-layer').children, (b) => b.setAttribute('aria-pressed', (b.dataset.v === 'top') === !!s.top ? 'true' : 'false'));
   $('s-tint').value = s.tint;
   $('s-tint-text').textContent = s.tint + '%';
@@ -1521,6 +1532,7 @@ function onAct(act, t) {
       break;
     }
     case 'theme': S.settings.theme = t.dataset.v; applySettings(); save(); fillSettings(); return;
+    case 'palette': S.settings.palette = t.dataset.v; applySettings(); save(); fillSettings(); return;
     case 'layer':
       S.settings.top = t.dataset.v === 'top';
       call('set_layer', { top: S.settings.top }).catch(() => {});
@@ -1589,7 +1601,7 @@ function bind() {
 
   // Esc 一层一层往回退：当天小窗口 → 详情/设置 → 月视图 → 折叠日历
   window.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || e.isComposing) return;
+    if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return;
     if (S.pop) { S.pop = null; render(); return; }
     if (S.panel) { closePanels(); return; }
     if (S.big) { onAct('big-close', document.body); return; }
@@ -1606,8 +1618,9 @@ function bind() {
     // 只写了时间没写日期，就落在当前看的那天；有具体时间的存成日程，其余存成待办
     const q = parseQuick(text, new Date());
     const date = q.date || S.date;
-    if (q.time) addItem('event', { title: q.title || text, date: date, start: q.time, end: q.endTime || '' }, false);
-    else addItem('todo', { title: q.title || text, date: date }, false);
+    // “3点前交周报”是截止时间，记成待办；日程目前只能在一天之内，跨午夜的时间段记到当天 23:59
+    if (q.time && !q.isDeadline) addItem('event', { title: q.title || text, date: date, start: q.time, end: q.endTime ? (q.endNextDay ? '23:59' : q.endTime) : '' }, false);
+    else addItem('todo', { title: q.title || text, date: date, due: q.time || '' }, false);
     if (date !== S.date) {
       showToast('已添加到 ' + dayLabel(date), '去看看', () => {
         const d = fromIso(date);
@@ -1667,7 +1680,7 @@ function bind() {
 
   // 单行输入框里回车：保存并关掉详情
   ['p-title', 'p-place', 'p-date', 'p-start', 'p-end', 'p-due'].forEach((id) => $(id).addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || e.isComposing) return;
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
     e.target.blur();
     closePanels();
@@ -1690,7 +1703,7 @@ function bind() {
     render();
   });
   $('p-subs').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing && e.target.closest('.sub-name')) { e.preventDefault(); e.target.blur(); }
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && e.target.closest('.sub-name')) { e.preventDefault(); e.target.blur(); }
   });
 
   // 设置

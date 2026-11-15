@@ -1,11 +1,12 @@
 {
   "name": "jinjian",
   "private": true,
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "今笺 Jinjian：Windows 桌面玻璃日程小组件",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "test": "node tests/run.js",
     "tauri": "tauri"
   },
   "devDependencies": {

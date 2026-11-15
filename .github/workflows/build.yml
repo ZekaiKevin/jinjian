@@ -10,7 +10,21 @@ permissions:
   contents: write
 
 jobs:
+  # 先跑单元测试（日期识别、日历解析）；不过就不打包，也不发布。
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 单元测试
+        run: npm test
+
   windows:
+    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

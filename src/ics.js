@@ -11,25 +11,31 @@
     return String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n[ \t]/g, '');
   }
 
+  // 一次扫完：“\\n”是反斜杠加 n，不能被当成换行
   function unesc(s) {
-    return String(s || '').replace(/\\n/gi, '\n').replace(/\\([,;\\])/g, '$1');
+    return String(s || '').replace(/\\([nN,;\\])/g, (all, c) => (c === 'n' || c === 'N' ? '\n' : c));
   }
 
   function escText(s) {
     return String(s || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/([,;])/g, '\\$1');
   }
 
-  // “名字;参数=值:内容” 拆开；冒号要跳过引号里的。
+  // “名字;参数=值:内容” 拆开；冒号和分号都要跳过引号里的。
   function parseLine(line) {
     let quoted = false;
     let cut = -1;
+    const semis = [];
     for (let i = 0; i < line.length; i += 1) {
       const ch = line[i];
       if (ch === '"') quoted = !quoted;
-      else if (ch === ':' && !quoted) { cut = i; break; }
+      else if (!quoted && ch === ';') semis.push(i);
+      else if (!quoted && ch === ':') { cut = i; break; }
     }
     if (cut < 0) return null;
-    const head = line.slice(0, cut).split(';');
+    const head = [];
+    let from = 0;
+    semis.forEach((i) => { head.push(line.slice(from, i)); from = i + 1; });
+    head.push(line.slice(from, cut));
     const params = {};
     head.slice(1).forEach((p) => {
       const eq = p.indexOf('=');
@@ -51,10 +57,37 @@
     };
   }
 
+  // Outlook、Exchange 导出的日历用 Windows 的时区名，换成 IANA 名才能算偏移
+  const WIN_TZ = {
+    'China Standard Time': 'Asia/Shanghai', 'Taipei Standard Time': 'Asia/Taipei', 'Tokyo Standard Time': 'Asia/Tokyo',
+    'Korea Standard Time': 'Asia/Seoul', 'Singapore Standard Time': 'Asia/Singapore', 'India Standard Time': 'Asia/Kolkata',
+    'SE Asia Standard Time': 'Asia/Bangkok', 'W. Australia Standard Time': 'Australia/Perth', 'AUS Eastern Standard Time': 'Australia/Sydney',
+    'New Zealand Standard Time': 'Pacific/Auckland', 'Arabian Standard Time': 'Asia/Dubai', 'Israel Standard Time': 'Asia/Jerusalem',
+    'Russian Standard Time': 'Europe/Moscow', 'Turkey Standard Time': 'Europe/Istanbul', 'GMT Standard Time': 'Europe/London',
+    'Greenwich Standard Time': 'Atlantic/Reykjavik', 'W. Europe Standard Time': 'Europe/Berlin', 'Central Europe Standard Time': 'Europe/Budapest',
+    'Central European Standard Time': 'Europe/Warsaw', 'Romance Standard Time': 'Europe/Paris', 'E. Europe Standard Time': 'Europe/Chisinau',
+    'FLE Standard Time': 'Europe/Kiev', 'GTB Standard Time': 'Europe/Bucharest', 'South Africa Standard Time': 'Africa/Johannesburg',
+    'Egypt Standard Time': 'Africa/Cairo', 'Eastern Standard Time': 'America/New_York', 'Central Standard Time': 'America/Chicago',
+    'Mountain Standard Time': 'America/Denver', 'US Mountain Standard Time': 'America/Phoenix', 'Pacific Standard Time': 'America/Los_Angeles',
+    'Alaskan Standard Time': 'America/Anchorage', 'Hawaiian Standard Time': 'Pacific/Honolulu', 'Atlantic Standard Time': 'America/Halifax',
+    'Canada Central Standard Time': 'America/Regina', 'Mexico Standard Time': 'America/Mexico_City', 'SA Pacific Standard Time': 'America/Bogota',
+    'E. South America Standard Time': 'America/Sao_Paulo', 'Argentina Standard Time': 'America/Argentina/Buenos_Aires', 'UTC': 'UTC',
+  };
+  const tzMemo = {};
+  const ianaOf = (tz) => WIN_TZ[tz] || tz;
+  // 这个时区名系统认不认识
+  function tzKnown(tz) {
+    const name = ianaOf(tz);
+    if (!(name in tzMemo)) {
+      try { new Intl.DateTimeFormat('en-US', { timeZone: name }); tzMemo[name] = true; } catch (err) { tzMemo[name] = false; }
+    }
+    return tzMemo[name];
+  }
+
   // 某个时区在某一时刻比 UTC 快多少分钟。
   function tzOffsetMin(tz, utcMs) {
     const f = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+      timeZone: ianaOf(tz), hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
     const p = {};
     f.formatToParts(new Date(utcMs)).forEach((x) => { p[x.type] = x.value; });
@@ -66,15 +99,14 @@
     const w = dt.wall;
     if (dt.allDay) return new Date(w.y, w.m - 1, w.d);
     if (dt.utc) return new Date(Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s));
-    if (dt.tz) {
-      try {
-        const guess = Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s);
-        const first = guess - tzOffsetMin(dt.tz, guess) * 60000;
-        return new Date(guess - tzOffsetMin(dt.tz, first) * 60000);
-      } catch (err) {
-        // 不认识的时区名，当作本地时间
-      }
+    // 日历文件自己带的时区定义（只有标准时间、没有夏令时的那种）
+    if (dt.offset !== undefined) return new Date(Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s) - dt.offset * 60000);
+    if (dt.tz && tzKnown(dt.tz)) {
+      const guess = Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s);
+      const first = guess - tzOffsetMin(dt.tz, guess) * 60000;
+      return new Date(guess - tzOffsetMin(dt.tz, first) * 60000);
     }
+    // 不认识的时区名，当作本地时间
     return new Date(w.y, w.m - 1, w.d, w.h, w.mi, w.s);
   }
 
@@ -92,7 +124,7 @@
       if (eq > 0) map[kv.slice(0, eq).toUpperCase()] = kv.slice(eq + 1);
     });
     if (!map.FREQ) return null;
-    const rule = { freq: map.FREQ.toUpperCase(), interval: Math.max(1, Number(map.INTERVAL || 1)), byday: [], bydayOrd: [], count: map.COUNT ? Number(map.COUNT) : 0, until: null, bymonthday: 0 };
+    const rule = { freq: map.FREQ.toUpperCase(), interval: Math.max(1, Number(map.INTERVAL || 1)), byday: [], bydayOrd: [], count: map.COUNT ? Number(map.COUNT) : 0, until: null, bymonthday: [], bymonth: [] };
     if (map.BYDAY) {
       map.BYDAY.split(',').forEach((x) => {
         const m = /^([+-]?\d+)?([A-Z]{2})$/.exec(x.trim().toUpperCase());
@@ -101,14 +133,39 @@
         rule.bydayOrd.push({ ord: m[1] ? Number(m[1]) : 0, w: CODES[m[2]] });
       });
     }
-    if (map.BYMONTHDAY) rule.bymonthday = Number(map.BYMONTHDAY.split(',')[0]) || 0;
+    // 每月几号：可以写多个，负数从月底倒数（-1 是最后一天）
+    if (map.BYMONTHDAY) rule.bymonthday = map.BYMONTHDAY.split(',').map(Number).filter((x) => x && Math.abs(x) <= 31);
+    if (map.BYMONTH) rule.bymonth = map.BYMONTH.split(',').map(Number).filter((x) => x >= 1 && x <= 12).sort((a, b) => a - b);
     if (map.UNTIL) rule.until = parseDT({ value: map.UNTIL, params: {} });
     return rule;
+  }
+
+  // 日历文件里自带的时区定义：只记没有夏令时的（中国、印度这类），给系统不认识的时区名兜底
+  function readZones(lines) {
+    const zones = {};
+    let cur = null;
+    let sub = '';
+    lines.forEach((raw) => {
+      const line = raw.trim();
+      const up = line.toUpperCase();
+      if (up === 'BEGIN:VTIMEZONE') { cur = { id: '', std: null, dst: false }; return; }
+      if (up === 'END:VTIMEZONE') { if (cur && cur.id) zones[cur.id] = cur; cur = null; return; }
+      if (!cur) return;
+      if (up === 'BEGIN:STANDARD') sub = 'std';
+      else if (up === 'BEGIN:DAYLIGHT') { sub = 'dst'; cur.dst = true; } else if (up === 'END:STANDARD' || up === 'END:DAYLIGHT') sub = '';
+      else if (up.indexOf('TZID:') === 0) cur.id = line.slice(5).trim();
+      else if (up.indexOf('TZOFFSETTO:') === 0 && sub === 'std') {
+        const m = /^([+-])(\d{2})(\d{2})/.exec(line.slice(11).trim());
+        if (m) cur.std = (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+      }
+    });
+    return zones;
   }
 
   // 把一份日历文本里的所有 VEVENT 读出来。
   function parse(text) {
     const lines = unfold(text).split('\n');
+    const zones = readZones(lines);
     const events = [];
     let ev = null;
     let inAlarm = false;
@@ -117,7 +174,18 @@
       if (!line) return;
       const up = line.toUpperCase();
       if (up === 'BEGIN:VEVENT') { ev = { uid: '', title: '', place: '', notes: '', start: null, end: null, duration: null, rrule: null, exdates: [], rid: null, alarm: null, status: '' }; return; }
-      if (up === 'END:VEVENT') { if (ev && ev.start) events.push(ev); ev = null; inAlarm = false; return; }
+      if (up === 'END:VEVENT') {
+        if (ev && ev.start) {
+          [ev.start, ev.end, ev.rid].concat(ev.exdates).forEach((dt) => {
+            const z = dt && dt.tz && !tzKnown(dt.tz) ? zones[dt.tz] : null;
+            if (z && !z.dst && z.std !== null) dt.offset = z.std;
+          });
+          events.push(ev);
+        }
+        ev = null;
+        inAlarm = false;
+        return;
+      }
       if (!ev) return;
       if (up === 'BEGIN:VALARM') { inAlarm = true; return; }
       if (up === 'END:VALARM') { inAlarm = false; return; }
@@ -169,7 +237,11 @@
       return cb({ y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), h: w0.h, mi: w0.mi, s: w0.s });
     };
     if (r.freq === 'DAILY') {
-      for (let i = 0; i < 5000; i += 1) if (emit(base + i * r.interval * DAY) === false) return;
+      for (let i = 0; i < 5000; i += 1) {
+        const ms = base + i * r.interval * DAY;
+        if (r.byday.length && r.byday.indexOf(new Date(ms).getUTCDay()) < 0) continue; // “工作日每天”
+        if (emit(ms) === false) return;
+      }
     } else if (r.freq === 'WEEKLY') {
       const baseDow = new Date(base).getUTCDay();
       const days = (r.byday.length ? r.byday.slice() : [baseDow]).sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
@@ -182,39 +254,44 @@
           if (emit(ms) === false) return;
         }
       }
-    } else if (r.freq === 'MONTHLY' && r.bydayOrd.length) {
-      // 每月按“第几个周几”：2TU 是第二个周二，-1FR 是最后一个周五，不带数字就是每个
-      for (let i = 0; i < 1200; i += 1) {
-        const idx = (w0.y * 12 + (w0.m - 1)) + i * r.interval;
-        const y = Math.floor(idx / 12);
-        const mo = idx % 12;
-        const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
-        const firstDow = new Date(Date.UTC(y, mo, 1)).getUTCDay();
-        const picked = new Set();
-        r.bydayOrd.forEach((b) => {
-          const all = [];
-          for (let d = 1 + ((b.w - firstDow + 7) % 7); d <= last; d += 7) all.push(d);
-          if (b.ord > 0 && all[b.ord - 1]) picked.add(all[b.ord - 1]);
-          else if (b.ord < 0 && all[all.length + b.ord]) picked.add(all[all.length + b.ord]);
-          else if (b.ord === 0) all.forEach((d) => picked.add(d));
-        });
-        const days = Array.from(picked).sort((a, b) => a - b);
-        for (let k = 0; k < days.length; k += 1) {
-          const ms = Date.UTC(y, mo, days[k]);
-          if (ms < base) continue;
-          if (emit(ms) === false) return;
-        }
-      }
     } else if (r.freq === 'MONTHLY' || r.freq === 'YEARLY') {
-      const step = r.freq === 'YEARLY' ? 12 * r.interval : r.interval;
-      const day = r.bymonthday > 0 ? r.bymonthday : w0.d;
+      // 每月（或每年的指定几个月）里挑日子：第几个周几（2TU、-1FR）、几号（可多个，-1 是最后一天），都没写就沿用开始那天
+      const yearly = r.freq === 'YEARLY';
+      const months = yearly ? (r.bymonth.length ? r.bymonth : [w0.m]) : null;
       for (let i = 0; i < 1200; i += 1) {
-        const idx = (w0.y * 12 + (w0.m - 1)) + i * step;
-        const y = Math.floor(idx / 12);
-        const m = idx % 12;
-        const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-        if (day > last) continue;
-        if (emit(Date.UTC(y, m, day)) === false) return;
+        const slots = [];
+        if (yearly) months.forEach((mo) => slots.push([w0.y + i * r.interval, mo - 1]));
+        else {
+          const idx = (w0.y * 12 + (w0.m - 1)) + i * r.interval;
+          if (!r.bymonth.length || r.bymonth.indexOf(idx % 12 + 1) >= 0) slots.push([Math.floor(idx / 12), idx % 12]);
+        }
+        for (let q = 0; q < slots.length; q += 1) {
+          const y = slots[q][0];
+          const mo = slots[q][1];
+          const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+          const firstDow = new Date(Date.UTC(y, mo, 1)).getUTCDay();
+          const picked = new Set();
+          if (r.bydayOrd.length) {
+            r.bydayOrd.forEach((b) => {
+              const all = [];
+              for (let d = 1 + ((b.w - firstDow + 7) % 7); d <= last; d += 7) all.push(d);
+              if (b.ord > 0 && all[b.ord - 1]) picked.add(all[b.ord - 1]);
+              else if (b.ord < 0 && all[all.length + b.ord]) picked.add(all[all.length + b.ord]);
+              else if (b.ord === 0) all.forEach((d) => picked.add(d));
+            });
+          } else if (r.bymonthday.length) {
+            r.bymonthday.forEach((n) => {
+              const d = n > 0 ? n : last + 1 + n;
+              if (d >= 1 && d <= last) picked.add(d);
+            });
+          } else if (w0.d <= last) picked.add(w0.d);
+          const days = Array.from(picked).sort((x, z) => x - z);
+          for (let k = 0; k < days.length; k += 1) {
+            const ms = Date.UTC(y, mo, days[k]);
+            if (ms < base) continue;
+            if (emit(ms) === false) return;
+          }
+        }
       }
     } else {
       emit(base);
@@ -274,6 +351,16 @@
     const toMs = to.getTime();
     const out = { push: (one) => pieces(one, one.dur).forEach((p) => { if (p.ms <= toMs && p.ms + DAY > fromMs) all.push(p); }) };
     const overrides = events.filter((e) => e.rid);
+    const recurring = new Set(events.filter((e) => !e.rid && e.rrule).map((e) => e.uid));
+    const used = new Set();
+    // 单次改动：改过时间、地点的那一场，按它自己的时间算
+    const showOverride = (o) => {
+      used.add(o);
+      if (o.status === 'CANCELLED') return;
+      const d = durationMin(o);
+      const changed = instance(o, o.start, d);
+      if (changed.ms + d * 60000 >= fromMs && changed.ms <= toMs) out.push(changed);
+    };
     events.filter((e) => !e.rid).forEach((m) => {
       if (m.status === 'CANCELLED') return;
       const dur = durationMin(m);
@@ -282,30 +369,28 @@
         if (one.ms + dur * 60000 >= fromMs && one.ms <= toMs) out.push(one);
         return;
       }
+      const mine = overrides.filter((o) => o.uid === m.uid);
       const ov = new Map();
-      overrides.filter((o) => o.uid === m.uid).forEach((o) => ov.set(toDate(o.rid).getTime(), o));
+      mine.forEach((o) => ov.set(toDate(o.rid).getTime(), o));
       const ex = new Set(m.exdates.map((d) => toDate(d).getTime()));
       const until = m.rrule.until ? toDate(m.rrule.until).getTime() + (m.rrule.until.allDay ? DAY - 1 : 0) : Infinity;
       const max = m.rrule.count || Infinity;
       let count = 0;
       iterate(m, (wall) => {
-        const dt = { allDay: m.start.allDay, utc: m.start.utc, tz: m.start.tz, wall: wall };
+        const dt = { allDay: m.start.allDay, utc: m.start.utc, tz: m.start.tz, offset: m.start.offset, wall: wall };
         const ms = toDate(dt).getTime();
         if (ms > until || count >= max || ms > toMs) return false;
         count += 1;
         if (ex.has(ms)) return true;
-        if (ov.has(ms)) {
-          const o = ov.get(ms);
-          if (o.status !== 'CANCELLED') {
-            const changed = instance(o, o.start, durationMin(o));
-            if (changed.ms + dur * 60000 >= fromMs && changed.ms <= toMs) out.push(changed);
-          }
-          return true;
-        }
+        if (ov.has(ms)) { showOverride(ov.get(ms)); return true; }
         if (ms + dur * 60000 >= fromMs) out.push(instance(m, dt, dur));
         return true;
       });
+      // 规则里已经排不出来的那一场（超出次数、日期对不上）：服务器上改过的，照样显示
+      mine.forEach((o) => { if (!used.has(o) && toDate(o.rid).getTime() <= toMs) showOverride(o); });
     });
+    // 只收到了某一次的改动，没有它所属的重复日程（被邀请参加其中一场）
+    overrides.forEach((o) => { if (!used.has(o) && !recurring.has(o.uid)) showOverride(o); });
     return all;
   }
 

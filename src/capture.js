@@ -9,21 +9,31 @@
   const $ = (id) => document.getElementById(id);
   const WK = '日一二三四五六';
   const KINDS = ['event', 'todo', 'note'];
+  const DRAFT = 'jinjian-draft';
   let picked = null; // 手动选的类型；选过就一直用它，直到保存或放弃
+
+  // 草稿存一份在本机，窗口被重新加载也不丢
+  function keepDraft() { try { localStorage.setItem(DRAFT, $('text').value); } catch (err) { /* 存不了就算了 */ } }
+  function loadDraft() { try { return localStorage.getItem(DRAFT) || ''; } catch (err) { return ''; } }
+  // 输入法正在组字（拼音候选框开着）时，回车、Esc、Tab 是给输入法的
+  const composing = (e) => e.isComposing || e.keyCode === 229;
 
   function current() {
     const raw = $('text').value;
     const q = parseQuick(raw, new Date());
-    // 有具体时间的是日程；只有日期（“明天 买牛奶”）或什么都没写的是待办
-    const kind = picked || (q.time ? 'event' : 'todo');
+    // 有具体时间的是日程；只有日期（“明天 买牛奶”）、写了“3点前”这样的截止、或什么都没写的是待办
+    const kind = picked || (q.time && !q.isDeadline ? 'event' : 'todo');
     return { raw: raw.trim(), q: q, kind: kind };
   }
+
+  // 日程目前只能在一天之内：跨午夜的时间段记到当天 23:59
+  const endOf = (q) => (q.endNextDay ? '23:59' : q.endTime);
 
   function whenText(q) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(q.date || '');
     const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date();
     const day = m ? (d.getMonth() + 1) + '月' + d.getDate() + '日 周' + WK.charAt(d.getDay()) : '今天';
-    return day + (q.time ? ' · ' + q.time + (q.endTime ? ' – ' + q.endTime : '') : '');
+    return day + (q.time ? ' · ' + q.time + (q.endTime ? ' – ' + endOf(q) : '') : '');
   }
 
   function render() {
@@ -47,25 +57,34 @@
     if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
   }
 
+  function applyPalette(name) {
+    if (name === 'graphite' || name === 'indigo') document.documentElement.dataset.palette = name;
+  }
+
   function show() {
-    try { applyTheme(localStorage.getItem('jinjian-theme')); } catch (err) { /* 读不到就用默认 */ }
+    try {
+      applyTheme(localStorage.getItem('jinjian-theme'));
+      applyPalette(localStorage.getItem('jinjian-palette'));
+    } catch (err) { /* 读不到就用默认 */ }
     const box = $('box');
     box.classList.remove('show');
     void box.offsetWidth;
     box.classList.add('show');
-    setTimeout(() => { $('text').focus(); $('text').select(); }, 30);
+    // 光标放在末尾：留着草稿时接着写，不会一敲字就把它覆盖掉
+    setTimeout(() => { const t = $('text'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); }, 30);
     render();
   }
 
   function clear() {
     picked = null;
     $('text').value = '';
+    keepDraft();
     render();
   }
 
   function hide() { call('hide_capture').catch(() => {}); }
 
-  $('text').addEventListener('input', render);
+  $('text').addEventListener('input', () => { keepDraft(); render(); });
   $('kinds').addEventListener('click', (e) => {
     const b = e.target.closest('[data-kind]');
     if (!b) return;
@@ -74,6 +93,7 @@
     $('text').focus();
   });
   $('box').addEventListener('keydown', (e) => {
+    if (composing(e)) return;
     if (e.key === 'Escape') { e.preventDefault(); clear(); hide(); }
     if (e.key === 'Tab') {
       e.preventDefault();
@@ -86,19 +106,23 @@
     e.preventDefault();
     const c = current();
     if (!c.raw) return;
-    const payload = { kind: c.kind, raw: c.raw, title: c.q.title || c.raw, date: c.q.date, time: c.q.time, endTime: c.q.endTime || '' };
+    const payload = { kind: c.kind, raw: c.raw, title: c.q.title || c.raw, date: c.q.date, time: c.q.time, endTime: c.q.endTime ? endOf(c.q) : '' };
     call('capture_submit', { payload: JSON.stringify(payload) }).catch(() => {});
     clear();
   });
   // 点“?”不抢输入框的焦点
   document.querySelector('.help').addEventListener('mousedown', (e) => e.preventDefault());
   window.addEventListener('blur', hide);
-  window.addEventListener('storage', (e) => { if (e.key === 'jinjian-theme') applyTheme(e.newValue); });
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'jinjian-theme') applyTheme(e.newValue);
+    if (e.key === 'jinjian-palette') applyPalette(e.newValue);
+  });
 
   if (TAURI && TAURI.event) {
     TAURI.event.listen('capture-open', show);
     TAURI.event.listen('theme', (e) => applyTheme(e.payload));
+    TAURI.event.listen('palette', (e) => applyPalette(e.payload));
   }
-  clear();
+  $('text').value = loadDraft();
   show();
 })();
