@@ -106,6 +106,8 @@ let R = [];           // 同步来的日程展开后的具体场次
 let saveTimer = null;
 const pushTimers = {};
 const pushing = {};   // 正在上传的 iCloud 条目，避免同一条同时传两次
+const retries = {};   // 上传失败了几次，决定隔多久再试
+const retryTimers = {};
 
 const allItems = () => S.items.concat(R);
 const find = (id) => S.items.find((x) => x.id === id) || R.find((x) => x.id === id) || null;
@@ -138,25 +140,30 @@ async function load() {
   }
 }
 
+// 立刻把当前状态写到磁盘。退出前也走这里。
+async function writeNow() {
+  clearTimeout(saveTimer);
+  const json = JSON.stringify({
+    version: 2,
+    items: S.items.map((it) => { const c = Object.assign({}, it); delete c.uploading; return c; }),
+    note: S.note,
+    extras: S.extras,
+    notified: S.notified,
+    settings: S.settings,
+    remote: S.remote,
+  });
+  try {
+    if (invoke) await invoke('save_data', { json: json });
+    else localStorage.setItem('jinjian', json);
+  } catch (err) {
+    console.error('保存失败', err);
+  }
+}
+
+// 改动多的时候合并成一次写盘
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    const json = JSON.stringify({
-      version: 2,
-      items: S.items.map((it) => { const c = Object.assign({}, it); delete c.uploading; return c; }),
-      note: S.note,
-      extras: S.extras,
-      notified: S.notified,
-      settings: S.settings,
-      remote: S.remote,
-    });
-    try {
-      if (invoke) await invoke('save_data', { json: json });
-      else localStorage.setItem('jinjian', json);
-    } catch (err) {
-      console.error('保存失败', err);
-    }
-  }, 250);
+  saveTimer = setTimeout(writeNow, 250);
 }
 
 // 没做完的待办不标逾期，直接顺延到今天。
@@ -266,6 +273,18 @@ function pushSoon(href) {
   pushTimers[href] = setTimeout(() => pushRes(href), 1500);
 }
 
+// 上传失败（断网、服务器出错）：隔 5 秒、30 秒、2 分钟、之后每 10 分钟再试
+function retryPush(href) {
+  const n = (retries[href] = (retries[href] || 0) + 1);
+  clearTimeout(retryTimers[href]);
+  retryTimers[href] = setTimeout(() => pushRes(href), [5, 30, 120, 600][Math.min(n, 4) - 1] * 1000);
+}
+
+// 所有改过还没传上去的，排队上传
+function pushPending() {
+  Object.keys(S.remote.res).forEach((h) => { if (S.remote.res[h].dirty && !pushing[h]) pushSoon(h); });
+}
+
 // 把本机改过的一条日程传回 iCloud。
 async function pushRes(href) {
   const res = S.remote.res[href];
@@ -273,13 +292,26 @@ async function pushRes(href) {
   if (!res || !res.dirty || !user) return;
   if (pushing[href]) { pushing[href] = 'again'; return; }
   pushing[href] = true;
+  clearTimeout(retryTimers[href]);
   const sent = res.ics;
+  let failed = false;
   try {
-    const r = await dav.put(user, href, sent, res.etag);
+    // 上一次上传后服务器没给新版本号（iCloud 有时不给）：先问一下现在是哪个版本。
+    // 不问的话这次会被当成“新建”发出去，服务器说“已经有了”，这次修改就丢了。
+    let etag = res.etag;
+    let isNew = false;
+    if (!etag) {
+      const e = await dav.etagOf(user, href);
+      if (e.status === 404) isNew = true;
+      else if (e.status >= 300) throw new Error('HTTP ' + e.status);
+      else etag = e.etag;
+    }
+    const r = await dav.put(user, href, sent, etag, isNew);
     const cur = S.remote.res[href] || res;
     if (r.ok) {
       cur.etag = r.etag || '';
       cur.dirty = cur.ics !== sent; // 上传途中又改过，留着下一轮再传
+      delete retries[href];
       setStatus('已保存到 iCloud');
       if (!r.etag && !cur.dirty) setTimeout(() => syncNow(false), 2000);
     } else if (r.status === 412) {
@@ -288,14 +320,19 @@ async function pushRes(href) {
       delete pushing[href];
       await syncNow(false);
     } else {
-      setStatus('保存到 iCloud 失败（' + r.status + '）');
+      failed = true;
+      setStatus('保存到 iCloud 失败（' + r.status + '），稍后会再试');
     }
   } catch (err) {
+    failed = true;
     setStatus(errText(err));
   }
   delete pushing[href];
   const after = S.remote.res[href];
-  if (after && after.dirty && after.ics !== sent) pushSoon(href);
+  if (after && after.dirty) {
+    if (failed) retryPush(href);
+    else if (after.ics !== sent) pushSoon(href);
+  }
   save();
 }
 
@@ -308,13 +345,18 @@ async function uploadPending() {
   const sig = (x) => JSON.stringify([x.title, x.date, x.start, x.end, x.allDay, x.place, x.notes, x.remind]);
   for (const it of list) {
     it.uploading = true;
+    const cal = it.cal;
     const id = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : uid('u')).toUpperCase();
-    const href = it.cal + id + '.ics';
+    const href = cal + id + '.ics';
     const ics = ICS.build(id, it);
     const before = sig(it);
     try {
-      const r = await dav.put(sync.user, href, ics, null);
-      if (r.ok) {
+      const r = await dav.put(sync.user, href, ics, '', true);
+      if (r.ok && (S.items.indexOf(it) < 0 || it.kind !== 'event' || it.cal !== cal)) {
+        // 上传途中这一条被删了、改成了待办、或者换了日历：服务器上这份不该留着
+        it.uploading = false;
+        await dav.remove(sync.user, href, r.etag || '').catch(() => {});
+      } else if (r.ok) {
         const res = { etag: r.etag || '', ics: ics, cal: it.cal };
         S.remote.res[href] = res;
         if (sig(it) !== before) {
@@ -1076,6 +1118,8 @@ async function connect() {
 
 function disconnect() {
   const user = S.settings.sync.user;
+  [pushTimers, retryTimers].forEach((t) => Object.keys(t).forEach((h) => { clearTimeout(t[h]); delete t[h]; }));
+  Object.keys(retries).forEach((h) => delete retries[h]);
   if (user) call('cred_delete', { user: user }).catch(() => {});
   S.items.forEach((it) => { delete it.cal; });
   S.settings.sync = { on: false, user: user, cals: [], target: '' };
@@ -1675,6 +1719,16 @@ function bind() {
     TAURI.event.listen('capture', (e) => {
       try { fromCapture(typeof e.payload === 'string' ? JSON.parse(e.payload) : e.payload); } catch (err) { console.error(err); }
     });
+    // 从托盘退出：先把还没写盘的改动写完，再告诉外壳可以退了
+    TAURI.event.listen('flush', async () => {
+      try { await writeNow(); } finally { call('flush_done').catch(() => {}); }
+    });
+    // 又双击打开了一次：收起着的话展开，让人看到它
+    TAURI.event.listen('second-instance', () => {
+      if (!S.compact) return;
+      S.compact = '';
+      render();
+    });
   }
 }
 
@@ -1693,8 +1747,8 @@ async function start() {
   loadWallpaper();
   if (invoke) {
     if (S.settings.top) call('set_layer', { top: true }).catch(() => {});
-    Object.keys(S.remote.res).forEach((h) => { if (S.remote.res[h].dirty) pushSoon(h); });
-    const cycle = async () => { await uploadPending(); await syncNow(false); };
+    pushPending();
+    const cycle = async () => { await uploadPending(); await syncNow(false); pushPending(); };
     setTimeout(cycle, 2500);
     setInterval(cycle, 10 * 60 * 1000);
   }

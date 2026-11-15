@@ -8,6 +8,7 @@ mod desk;
 
 use std::{
     fs,
+    io::Write,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -33,6 +34,8 @@ const CRED_SERVICE: &str = "Jinjian iCloud";
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 /// 用户从托盘点了“退出”。主窗口意外没了要自动重开，正常退出不算。
 static QUITTING: AtomicBool = AtomicBool::new(false);
+/// 退出前界面已经把数据写完了。
+static FLUSHED: AtomicBool = AtomicBool::new(false);
 
 /// 界面上报的可点击区域（相对窗口左上角的物理像素），以及是否处于“鼠标穿透”。
 #[derive(Default)]
@@ -77,13 +80,56 @@ fn load_data(app: AppHandle) -> Result<String, String> {
     }
 }
 
-/// 先写临时文件再替换，避免写到一半断电把数据写坏。
+/// 先写临时文件、确认真正落到磁盘上，再替换正式文件。
+/// 这样写到一半断电，正式文件还是上一份完整的，不会变成半截或空文件。
+/// 这是同步命令，在主线程上一个一个执行，两次保存不会同时写同一个临时文件。
 #[tauri::command]
 fn save_data(app: AppHandle, json: String) -> Result<(), String> {
     let dir = data_dir(&app)?;
     let tmp = dir.join("data.json.tmp");
-    fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, dir.join("data.json")).map_err(|e| e.to_string())
+    {
+        let mut file = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
+    // 杀毒软件、索引服务偶尔会短暂占着文件，替换失败就稍等再试
+    let target = dir.join("data.json");
+    let mut error = String::new();
+    for _ in 0..3 {
+        match fs::rename(&tmp, &target) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                error = e.to_string();
+                thread::sleep(Duration::from_millis(15));
+            }
+        }
+    }
+    Err(error)
+}
+
+/// 界面说：退出前要写的数据写完了。
+#[tauri::command]
+fn flush_done() {
+    FLUSHED.store(true, Ordering::SeqCst);
+}
+
+/// 从托盘退出：先让界面把还没写盘的改动写完（最多等 1.5 秒），再真正退出。
+fn quit(app: &AppHandle) {
+    if QUITTING.swap(true, Ordering::SeqCst) {
+        return; // 已经在退了
+    }
+    if app.get_webview_window("main").is_none() || app.emit_to("main", "flush", ()).is_err() {
+        app.exit(0);
+        return;
+    }
+    let app = app.clone();
+    thread::spawn(move || {
+        let until = Instant::now() + Duration::from_millis(1500);
+        while !FLUSHED.load(Ordering::SeqCst) && Instant::now() < until {
+            thread::sleep(Duration::from_millis(20));
+        }
+        app.exit(0);
+    });
 }
 
 /// 读取 Windows 当前壁纸（系统转码后的那份），界面用它在组件内部做玻璃模糊。
@@ -309,6 +355,21 @@ fn main() {
     let for_keys = shared.clone();
 
     tauri::Builder::default()
+        // 只允许开一个今笺：两个同时开着会互相覆盖数据。
+        // 再打开一次时，新开的那个直接退出，已经开着的这个把自己亮出来。必须第一个注册。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+            }
+            let _ = app.emit_to("main", "second-instance", ());
+            let _ = app
+                .notification()
+                .builder()
+                .title("今笺已经在运行")
+                .body("它在桌面上；被窗口挡住时按 Win + D 就能看到。")
+                .show();
+        }))
         .plugin(tauri_plugin_notification::init())
         .manage(shared)
         .setup(move |app| {
@@ -360,10 +421,7 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             tray.on_menu_event(move |app, event| match event.id.as_ref() {
-                "quit" => {
-                    QUITTING.store(true, Ordering::SeqCst);
-                    app.exit(0);
-                }
+                "quit" => quit(app),
                 "capture" => show_capture(app),
                 "toggle_lock" => toggle_lock(app, &for_tray),
                 _ => {}
@@ -459,7 +517,9 @@ fn main() {
                 }
             }
             // 主窗口被系统销毁了（不是用户退出）：重开一个，免得只剩托盘图标。
+            // 比如资源管理器重启时，挂在桌面名下的小组件会被连带销毁。
             // 刚启动就没了多半是别的问题，不反复重开。
+            // 重开前 Tauri 会先放掉“只能开一个”的锁，新进程不会把自己当成第二个而退出。
             WindowEvent::Destroyed
                 if window.label() == "main"
                     && !QUITTING.load(Ordering::SeqCst)
@@ -472,6 +532,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_data,
             save_data,
+            flush_done,
             wallpaper,
             set_hit_rects,
             set_locked,

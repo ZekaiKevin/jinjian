@@ -104,10 +104,24 @@
       return out;
     }
 
-    async function put(user, href, ics, etag) {
+    // 查一条日程在服务器上现在的版本号。不存在时 status 是 404。
+    async function etagOf(user, href) {
+      const r = await req('PROPFIND', href, {
+        user: user, headers: [['Depth', '0']],
+        body: '<d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>',
+      });
+      return { status: r.status, etag: r.status < 300 ? text(xml(r.body).documentElement, 'getetag') : '' };
+    }
+
+    // 上传一条日程。
+    //   etag 有值：只在服务器上还是这个版本时才覆盖（别处改过就返回 412）
+    //   isNew：新建，服务器上已经有同名的就返回 412
+    //   都没有：直接覆盖（只在实在拿不到版本号时用）
+    async function put(user, href, ics, etag, isNew) {
+      const cond = etag ? [['If-Match', etag]] : isNew ? [['If-None-Match', '*']] : [];
       const r = await req('PUT', href, {
         user: user, type: 'text/calendar; charset=utf-8', body: ics,
-        headers: [etag ? ['If-Match', etag] : ['If-None-Match', '*']],
+        headers: cond,
       });
       return { ok: r.status >= 200 && r.status < 300, status: r.status, etag: r.headers.etag || '', url: r.url };
     }
@@ -117,7 +131,7 @@
       return { ok: (r.status >= 200 && r.status < 300) || r.status === 404, status: r.status };
     }
 
-    return { discover: discover, fetchCalendar: fetchCalendar, put: put, remove: remove };
+    return { discover: discover, fetchCalendar: fetchCalendar, etagOf: etagOf, put: put, remove: remove };
   }
 
   global.CalDav = { create: create };
