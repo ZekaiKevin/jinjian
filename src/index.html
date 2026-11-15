@@ -30,6 +30,7 @@
         <div id="p-toggles" class="row gap8">
           <button id="p-done" type="button" class="pill tap" data-act="p-done" aria-pressed="false">完成</button>
           <button id="p-star" type="button" class="pill tap" data-act="p-star" aria-pressed="false">重点</button>
+          <button id="p-count" type="button" class="pill tap" data-act="p-count" aria-pressed="false" aria-label="设为倒数日" data-tip="在顶部显示“距它还有几天”">倒数日</button>
         </div>
 
         <div class="frow">
@@ -218,6 +219,8 @@
           </button>
         </div>
       </header>
+
+      <div id="countdowns" class="cds" hidden></div>
 
       <div class="views">
         <div id="day" class="layer from-up on scroll">
@@ -413,6 +416,7 @@
 <script src="lunar.js"></script>
 <script src="nlp.js"></script>
 <script src="search.js"></script>
+<script src="countdown.js"></script>
 <script src="caldav.js"></script>
 <script src="app.js"></script>
 </body>

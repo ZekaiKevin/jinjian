@@ -237,7 +237,7 @@ function rebuildRemote() {
         out.push({
           id: id, kind: 'event', remote: true, href: href, recurring: recurring, cal: res.cal, calName: cal.name, color: cal.color || '',
           date: o.date, start: o.start, end: o.end, allDay: o.allDay, title: o.title, place: o.place, notes: o.notes,
-          remind: o.remind === null || o.remind === undefined ? 'none' : String(o.remind), subs: extra.subs || [], parts: o.parts || 0,
+          remind: o.remind === null || o.remind === undefined ? 'none' : String(o.remind), subs: extra.subs || [], parts: o.parts || 0, countdown: !!extra.countdown,
         });
       });
     });
@@ -393,7 +393,10 @@ async function uploadPending() {
           res.dirty = true;
           pushSoon(href);
         }
-        if (it.subs && it.subs.length) S.extras['r|' + href] = { subs: it.subs };
+        const carry = {};
+        if (it.subs && it.subs.length) carry.subs = it.subs;
+        if (it.countdown) carry.countdown = true;
+        if (Object.keys(carry).length) S.extras['r|' + href] = carry;
         S.items = S.items.filter((x) => x !== it);
         if (S.sel === it.id) S.sel = 'r|' + href; // 详情还开着就接着显示传上去的这条
         setStatus('已保存到 iCloud');
@@ -424,6 +427,14 @@ function updateItem(it, p) {
       S.extras[it.id] = Object.assign({}, S.extras[it.id], { subs: rest.subs });
       it.subs = rest.subs;
       delete rest.subs;
+    }
+    if ('countdown' in rest) {
+      // 倒数日标记只存在本机，不写进 iCloud
+      const extra = Object.assign({}, S.extras[it.id]);
+      if (rest.countdown) extra.countdown = true; else delete extra.countdown;
+      S.extras[it.id] = extra;
+      it.countdown = !!rest.countdown;
+      delete rest.countdown;
     }
     if (Object.keys(rest).length && !isLocked(it)) {
       Object.assign(it, rest);
@@ -728,6 +739,15 @@ function renderDay(map, info) {
   }).join(''));
 }
 
+// 顶部倒数日：最近的三个，“距 X 还有 N 天”。没有就整条隐藏，不占位置也不写字。
+function renderCountdowns() {
+  const list = Countdown.pick(allItems(), today());
+  $('countdowns').hidden = list.length === 0;
+  setHtml($('countdowns'), list.map((c) => '<button type="button" class="cd tap" data-act="cd" data-id="' + esc(c.id) + '" aria-label="' + esc(c.label) + '">'
+    + (c.lead ? '<span class="cd-lead">' + esc(c.lead) + '</span>' : '')
+    + '<span class="cd-title">' + esc(c.title) + '</span><span class="cd-tail">' + esc(c.tail) + '</span></button>').join(''));
+}
+
 function renderCal(map, month) {
   const t = today();
   $('cal-title').textContent = S.vm.y + '年' + (S.vm.m + 1) + '月';
@@ -844,7 +864,8 @@ function applyMode() {
     w = 768;
     h = Math.min(640, full);
   } else if (S.mode === 'cal' && !S.search) {
-    h = Math.min(full, 156 + $('cal').offsetHeight);
+    const bar = $('countdowns');
+    h = Math.min(full, 156 + $('cal').offsetHeight + (bar.hidden ? 0 : bar.offsetHeight + 12)); // 12 是它和上下的间距
   }
   shell.style.width = w + 'px';
   shell.style.height = h + 'px';
@@ -909,6 +930,7 @@ function render() {
   renderCal(map, month);
   renderBig(map, month);
   renderCompact(map, info);
+  renderCountdowns();
   applyMode();
   renderPop(map);
 
@@ -1089,7 +1111,9 @@ function fillPanel(it) {
   $('p-allday').hidden = isTodo;
   $('p-allday').disabled = locked;
   $('p-allday').setAttribute('aria-pressed', it.allDay ? 'true' : 'false');
-  $('p-toggles').hidden = !isTodo;
+  $('p-done').hidden = !isTodo;
+  $('p-star').hidden = !isTodo;
+  $('p-count').setAttribute('aria-pressed', it.countdown ? 'true' : 'false');
   $('p-time-row').hidden = isTodo || !!it.allDay;
   $('p-due-row').hidden = !isTodo;
   $('p-remind-row').hidden = isTodo;
@@ -1661,6 +1685,12 @@ function onAct(act, t) {
       updateItem(cur, { star: !cur.star });
       t.setAttribute('aria-pressed', cur.star ? 'true' : 'false');
       break;
+    case 'p-count':
+      if (!cur) return;
+      updateItem(cur, { countdown: !cur.countdown });
+      t.setAttribute('aria-pressed', cur.countdown ? 'true' : 'false');
+      break;
+    case 'cd': jumpTo(id); return;
     case 'p-del': {
       if (!cur) return;
       if (cur.remote) {
