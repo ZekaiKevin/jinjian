@@ -348,6 +348,21 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .day { font-size: 46px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .month { font-size: 15px; font-weight: 700; }
 .week { font-size: 13px; color: rgb(var(--fg) / 0.86); }
+.day-wrap { position: relative; }
+
+/* 农历、节气、节日：最多三个字，颜色比正文淡一档；休 / 班是一枚很小的角标。 */
+.lz { height: 13px; font-size: 11px; line-height: 13px; white-space: nowrap; color: rgb(var(--fg) / 0.66); }
+.lz.month { color: rgb(var(--fg) / 0.8); }
+.lz.term { color: rgb(var(--fg) / 0.86); }
+.lz.festival { color: var(--accent-ink); }
+.hol { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 14px; height: 14px; padding: 0 2px; border-radius: 5px; font-style: normal; font-size: 10px; font-weight: 700; line-height: 1; border: 1px solid transparent; }
+.hol.off { background: rgb(var(--mint-rgb) / 0.2); color: var(--mint); }
+.hol.work { border-color: rgb(var(--fg) / 0.5); color: rgb(var(--fg) / 0.86); }
+/* 头部：三行字挤进原来的 46px 高，所以行距收一点；没有农历这一行时保持原样 */
+.date-btn.lz-on .col { gap: 1px; }
+.date-btn.lz-on .month { line-height: 16px; }
+.date-btn.lz-on .week { line-height: 14px; }
+#h-hol { position: absolute; top: -3px; right: -6px; }
 
 #pips-row { flex-shrink: 0; }
 .pips { flex: 1 1 0; display: flex; gap: 4px; }
@@ -495,10 +510,15 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .weekdays.wide span { padding-right: 9px; }
 
 .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
-.cday { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; height: 44px; border-radius: 14px; border: 1.5px solid transparent; font-size: 14px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; }
+.cday { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; height: 44px; border-radius: 14px; border: 1.5px solid transparent; font-size: 14px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; }
+.cday .lz { max-width: 100%; height: 10px; margin-top: -1px; overflow: hidden; font-size: 9px; line-height: 10px; font-weight: 500; }
+.cday .hol { position: absolute; top: 2px; right: 2px; min-width: 12px; height: 12px; border-radius: 4px; font-size: 9px; }
 .cday.out { color: rgb(var(--fg) / 0.62); }
+.cday.out .lz { opacity: 0.8; }
 .cday.today { border-color: var(--accent); color: var(--accent-ink); font-weight: 800; }
 .cday.sel { border-color: transparent; background: var(--solid); color: var(--on-solid); font-weight: 800; }
+.cday.sel .lz { color: var(--on-solid); opacity: 0.74; }
+.cday.sel .hol { border-color: transparent; background: rgb(var(--deep-rgb) / 0.12); color: var(--on-solid); }
 .dots { display: flex; gap: 2px; height: 4px; }
 .dots i { width: 4px; height: 4px; border-radius: 50%; }
 .dots .e { background: var(--accent); }
@@ -520,6 +540,10 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .cell.sel { border-color: rgb(var(--fg) / 0.55); background-color: var(--cell-sel); }
 .cell-head { flex-shrink: 0; display: flex; align-items: center; height: 20px; padding-left: 3px; }
 .badge { flex: 1 1 0; display: flex; align-items: center; gap: 4px; font-size: 11px; color: rgb(var(--fg) / 0.86); font-variant-numeric: tabular-nums; }
+.cell-head .hol { margin-right: 4px; }
+.cell-head .badge { min-width: 0; overflow: hidden; }
+.cell-head .lz { flex: 0 1 auto; min-width: 0; height: 20px; overflow: hidden; text-overflow: ellipsis; margin-right: 3px; font-size: 10px; line-height: 20px; }
+.cell.out .lz { opacity: 0.8; }
 .badge i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgb(var(--fg)); }
 .num { min-width: 20px; height: 20px; padding: 0 4px; border-radius: 10px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .num.today { background: var(--accent); color: var(--on-accent); font-weight: 800; }

@@ -185,11 +185,12 @@
     <!-- 小组件 -->
     <main id="widget" class="layer from-scale on">
       <header class="row gap10">
-        <button type="button" class="date-btn tap" data-act="view" aria-label="日历" data-tip="点日期打开日历">
-          <span id="h-day" class="day">–</span>
+        <button id="date-btn" type="button" class="date-btn tap" data-act="view" aria-label="日历" data-tip="点日期打开日历">
+          <span class="day-wrap"><span id="h-day" class="day">–</span><span id="h-hol" class="hol" hidden></span></span>
           <span class="col gap2">
             <span id="h-month" class="month"></span>
             <span id="h-week" class="week"></span>
+            <span id="h-lz" class="lz" hidden></span>
           </span>
         </button>
         <div id="day-step" class="row day-step">
@@ -395,6 +396,7 @@
 <div id="tip" class="tip" role="tooltip" hidden></div>
 
 <script src="ics.js"></script>
+<script src="lunar.js"></script>
 <script src="nlp.js"></script>
 <script src="caldav.js"></script>
 <script src="app.js"></script>

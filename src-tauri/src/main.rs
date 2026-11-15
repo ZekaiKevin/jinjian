@@ -80,6 +80,19 @@ fn load_data(app: AppHandle) -> Result<String, String> {
     }
 }
 
+/// 数据目录里的 holidays.json（法定休班表的补充 / 覆盖）。读不出来、太大就当没有；
+/// 内容是不是合法、有没有 BOM 由前端的 Lunar.setHolidays 判断，坏了它会忽略。
+#[tauri::command]
+fn get_holidays(app: AppHandle) -> Result<String, String> {
+    let dir = data_dir(&app)?;
+    let text = fs::read_to_string(dir.join("holidays.json")).unwrap_or_default();
+    Ok(if text.len() > 1_000_000 {
+        String::new()
+    } else {
+        text
+    })
+}
+
 /// 先写临时文件、确认真正落到磁盘上，再替换正式文件。
 /// 这样写到一半断电，正式文件还是上一份完整的，不会变成半截或空文件。
 /// 这是同步命令，在主线程上一个一个执行，两次保存不会同时写同一个临时文件。
@@ -531,6 +544,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             load_data,
+            get_holidays,
             save_data,
             flush_done,
             wallpaper,

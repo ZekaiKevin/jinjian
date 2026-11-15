@@ -21,6 +21,8 @@ const SWITCHES = [
   { k: 'blur', name: '背景模糊', tip: '关掉后玻璃里不再画模糊的壁纸，只留半透明的底色，更省资源。' },
   { k: 'lock', name: '鼠标穿透', tip: '开启后鼠标会穿过小组件，点到后面的桌面。\n按 Alt + L，或在托盘图标的菜单里关闭。' },
   { k: 'carry', name: '未完成顺延到明天', tip: '当天没勾掉的待办，第二天会自动出现在当天的列表里，不标逾期。\n关掉后，今天的待办上方会提示之前还有几项没做完，可以一键移到今天。' },
+  { k: 'lunar', name: '农历与节气', tip: '日期旁显示农历、节气和节日。' },
+  { k: 'hol', name: '休 / 班角标', tip: '法定节假日标“休”，调休上班的日子标“班”。\n内置 2025–2027 年；之后的年份，把 holidays.json 放进数据目录就能补上。' },
   { k: 'autostart', name: '开机自启' },
 ];
 const TIP_CONNECT = '填 Apple ID 邮箱和“App 专用密码”（不是登录密码）。\n专用密码在 account.apple.com →“登录与安全”→“App 专用密码”里生成，保存在 Windows 凭据管理器里。';
@@ -65,11 +67,35 @@ function replay(el, cls) {
   el.classList.add(cls);
 }
 
+// 农历、节气、节日、休班。关掉开关就当它们不存在；表外的年份（1900 年以前、2100 年以后）也是空的。
+function lunarOf(key) {
+  const d = fromIso(key);
+  const i = Lunar.info(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  return {
+    sub: S.settings.lunar !== false ? i.sub : '',
+    kind: i.kind,
+    full: S.settings.lunar !== false ? i.lunar : '',
+    hol: S.settings.hol !== false ? i.hol : '',
+    name: i.festival || i.term,
+  };
+}
+const holText = (h) => (h === 'off' ? '休' : h === 'work' ? '班' : '');
+const lzHtml = (z) => (z.sub ? '<span class="lz ' + z.kind + '">' + esc(z.sub) + '</span>' : '');
+const holHtml = (z) => (z.hol ? '<i class="hol ' + z.hol + '" aria-hidden="true">' + holText(z.hol) + '</i>' : '');
+// 读屏和悬停提示用的完整说法：农历十月初七 · 立冬 · 休息日
+function lunarSay(z) {
+  const bits = [];
+  if (z.full) bits.push('农历' + z.full);
+  if (z.name && z.sub) bits.push(z.name);
+  if (z.hol) bits.push(z.hol === 'off' ? '休息日' : '调休上班');
+  return bits.join(' · ');
+}
+
 // ---------- 数据 ----------
 
 function defaults() {
   return {
-    theme: 'dark', palette: 'indigo', tint: 50, blur: true, carry: true, autostart: false, top: false,
+    theme: 'dark', palette: 'indigo', tint: 50, blur: true, carry: true, lunar: true, hol: true, autostart: false, top: false,
     fold: { ev: false, td: false, note: false }, // 日程、待办、便签各自是否折起来
     sync: { on: false, user: '', cals: [], target: '' },
   };
@@ -602,6 +628,17 @@ function renderHeader() {
   $('h-day').textContent = d.getDate();
   $('h-month').textContent = (d.getMonth() + 1) + '月';
   $('h-week').textContent = '周' + WK.charAt(d.getDay());
+  const z = lunarOf(S.date);
+  $('date-btn').classList.toggle('lz-on', !!z.sub);
+  $('h-lz').hidden = !z.sub;
+  $('h-lz').textContent = z.sub;
+  $('h-lz').className = 'lz ' + z.kind;
+  $('h-hol').hidden = !z.hol;
+  $('h-hol').textContent = holText(z.hol);
+  $('h-hol').className = 'hol ' + z.hol;
+  const say = lunarSay(z);
+  $('date-btn').dataset.tip = (say ? say + '\n' : '') + '点日期打开日历';
+  $('date-btn').setAttribute('aria-label', '日历，' + (d.getMonth() + 1) + '月' + d.getDate() + '日 周' + WK.charAt(d.getDay()) + (say ? '，' + say : ''));
   $('b-view').setAttribute('aria-pressed', S.mode === 'cal' ? 'true' : 'false');
   $('b-settings').setAttribute('aria-pressed', S.panel === 'settings' ? 'true' : 'false');
   $('b-lock').setAttribute('aria-pressed', S.locked ? 'true' : 'false');
@@ -700,9 +737,12 @@ function renderCal(map, month) {
     if (x.out) cls.push('out');
     if (x.key === t) cls.push('today');
     if (x.key === S.date) cls.push('sel');
-    const label = (x.d.getMonth() + 1) + '月' + x.d.getDate() + '日，' + evN + ' 个日程，' + tdN + ' 个待办';
+    const z = lunarOf(x.key);
+    const say = lunarSay(z);
+    const label = (x.d.getMonth() + 1) + '月' + x.d.getDate() + '日，' + (say ? say + '，' : '') + evN + ' 个日程，' + tdN + ' 个待办';
     return '<button type="button" class="' + cls.join(' ') + '" data-act="pick-day" data-date="' + x.key + '" aria-label="' + label + '">'
       + '<span>' + x.d.getDate() + '</span>'
+      + lzHtml(z) + holHtml(z)
       + '<span class="dots">' + (evN >= 1 ? '<i class="e"></i>' : '') + (evN >= 2 ? '<i class="e"></i>' : '') + (tdN >= 1 ? '<i class="t"></i>' : '') + '</span>'
       + '</button>';
   }).join(''));
@@ -720,10 +760,14 @@ function renderBig(map, month) {
     const cls = ['cell'];
     if (x.out) cls.push('out');
     if (x.key === S.date) cls.push('sel');
-    const label = (x.d.getMonth() + 1) + '月' + x.d.getDate() + '日，' + events.length + ' 个日程，' + tdN + ' 个待办';
+    const z = lunarOf(x.key);
+    const say = lunarSay(z);
+    const label = (x.d.getMonth() + 1) + '月' + x.d.getDate() + '日，' + (say ? say + '，' : '') + events.length + ' 个日程，' + tdN + ' 个待办';
     let html = '<div class="' + cls.join(' ') + '" data-date="' + x.key + '">'
       + '<div class="cell-head">'
+      + holHtml(z)
       + '<span class="badge">' + (tdN ? '<i role="img" aria-label="未完成待办"></i><span>' + tdN + '</span>' : '') + '</span>'
+      + lzHtml(z)
       + '<button type="button" class="num tap' + (x.key === t ? ' today' : '') + '" data-act="pop-day" data-date="' + x.key + '" aria-label="' + label + '">' + x.d.getDate() + '</button>'
       + '</div>';
     html += shown.map((e) => '<button type="button" class="line tap' + (e.id === S.sel ? ' sel' : '') + '" data-act="open" data-id="' + esc(e.id) + '"' + color(e.color) + '>'
@@ -1548,6 +1592,7 @@ function onAct(act, t) {
       if (k === 'carry') rollOver();
       applySettings();
       save();
+      if (k === 'lunar' || k === 'hol') render();
       break;
     }
     case 'cal-sw': {
@@ -1751,6 +1796,10 @@ async function start() {
   if (!invoke) root.classList.add('preview');
   layout();
   await load();
+  if (invoke) {
+    // 数据目录里的 holidays.json 覆盖内置休班表；没有、读不出来、写坏了都当没这回事
+    try { Lunar.setHolidays(await invoke('get_holidays')); } catch (err) { /* 用内置的 */ }
+  }
   applySettings();
   rollOver();
   rebuildRemote();

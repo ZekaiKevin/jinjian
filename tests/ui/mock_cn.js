@@ -68,6 +68,7 @@
       if (cmd === 'wallpaper') { const r = await fetch(window.__WP); return await r.arrayBuffer(); }
       if (cmd === 'set_hit_rects') { log.rects = args.rects.length; return null; }
       if (cmd === 'dav') { if (opts.delay) await new Promise((r) => setTimeout(r, opts.delay)); return davMock(args.req); }
+      if (cmd === 'get_holidays') return window.__HOLIDAYS || '';
       if (cmd === 'notify') { log.notify.push(args); return null; }
       if (cmd === 'set_locked') { (listeners.locked || []).forEach((f) => f({ payload: args.locked })); return null; }
       return null;
