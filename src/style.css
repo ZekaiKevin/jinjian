@@ -132,6 +132,12 @@ body {
 .preview body { background: #3a3550 var(--wp) center / cover no-repeat; }
 
 button, input, textarea, select { font: inherit; color: inherit; text-shadow: inherit; }
+/* 下拉框弹出来的那一列是系统画的、不透明的（不是玻璃）：选项不能跟着 select 继承玻璃上的字色，
+   否则浅色字配系统的白底就看不见了。按当前文字的深浅给一对实色：浅色字 → 深底白字，深色字 → 白底深字。 */
+select option, select optgroup { background-color: var(--deep); color: #ffffff; text-shadow: none; }
+[data-ink="dark"] select option, [data-ink="dark"] select optgroup { background-color: #ffffff; color: var(--deep); }
+select { color-scheme: dark; }
+[data-ink="dark"] select { color-scheme: light; }
 button { cursor: pointer; border: 0; padding: 0; background: none; }
 input, textarea { user-select: text; -webkit-user-select: text; }
 input::placeholder, textarea::placeholder { color: rgb(var(--fg) / 0.7); }
