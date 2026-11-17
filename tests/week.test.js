@@ -313,3 +313,35 @@ test('拖出一段：到底了结束是 23:59，开始最晚 23:45', () => {
   assert.deepEqual(W.createRange('2026-11-17', 1430, 1439), { date: '2026-11-17', start: '23:45', end: '23:59' });
   assert.deepEqual(W.createRange('2026-11-17', -50, 20), { date: '2026-11-17', start: '00:00', end: '00:30' });
 });
+
+// ---------- 0.9.0：待办排成时间块、顶部一行 ↔ 时间轴 ----------
+
+test('spanOf：日程看开始结束；待办只有排成时间块（due + end）才占时间', () => {
+  assert.deepEqual(W.spanOf({ kind: 'event', date: '2026-11-16', start: '09:00', end: '10:30' }), { start: 540, end: 630 });
+  assert.equal(W.spanOf({ kind: 'todo', date: '2026-11-16', due: '17:00' }), null);
+  assert.deepEqual(W.spanOf({ kind: 'todo', date: '2026-11-16', due: '14:00', end: '15:15' }), { start: 840, end: 915 });
+  assert.equal(W.spanOf({ kind: 'todo', date: '2026-11-16', due: '15:00', end: '14:00' }), null);
+  assert.equal(W.spanOf(null), null);
+});
+
+test('toBlock：拖进时间轴，落点吸附到 15 分钟，默认一小时，放不下就往前挪', () => {
+  assert.deepEqual(W.toBlock({ kind: 'todo' }, '2026-11-17', 9 * 60 + 7), { date: '2026-11-17', due: '09:00', end: '10:00' });
+  assert.deepEqual(W.toBlock({ kind: 'event', allDay: true }, '2026-11-18', 14 * 60 + 29), { date: '2026-11-18', allDay: false, start: '14:15', end: '15:15' });
+  assert.deepEqual(W.toBlock({ kind: 'todo' }, '2026-11-17', 23 * 60 + 50), { date: '2026-11-17', due: '22:45', end: '23:45' });
+  assert.deepEqual(W.toBlock({ kind: 'todo' }, '2026-11-17', -30, 30), { date: '2026-11-17', due: '00:00', end: '00:30' });
+});
+
+test('toAllDay / changed / asTimed / fromTimed', () => {
+  assert.deepEqual(W.toAllDay({ kind: 'todo' }, '2026-11-19'), { date: '2026-11-19', due: '', end: '' });
+  assert.deepEqual(W.toAllDay({ kind: 'event' }, '2026-11-19'), { date: '2026-11-19', allDay: true });
+  const it = { kind: 'event', date: '2026-11-19', allDay: false, start: '09:00', end: '10:00' };
+  assert.deepEqual(W.changed(it, { date: '2026-11-19', allDay: false, start: '09:00', end: '11:00' }), { end: '11:00' });
+  assert.deepEqual(W.changed({ kind: 'todo', due: '', end: undefined }, { due: '', end: '' }), {});
+  const td = { kind: 'todo', date: '2026-11-19', due: '14:00', end: '15:00' };
+  assert.equal(W.asTimed(td).start, '14:00');
+  assert.deepEqual(W.fromTimed(td, { start: '15:00', end: '16:00', date: '2026-11-20' }), { due: '15:00', end: '16:00', date: '2026-11-20' });
+  assert.deepEqual(W.fromTimed(it, { start: '15:00' }), { start: '15:00' });
+  // 时间块的待办按日程的规矩拖：挪 45 分钟、跨一天
+  const r = W.drop('move', W.asTimed(td), { dMin: 45, dDays: 1 });
+  assert.deepEqual(W.fromTimed(td, r.patch), { date: '2026-11-20', due: '14:45', end: '15:45' });
+});

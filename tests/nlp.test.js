@@ -105,3 +105,81 @@ test('跨午夜的时间段', () => {
   // 同一天里的不算跨午夜
   assert.equal(parseQuick('明天下午2点到4点 开会', base).endNextDay, false);
 });
+
+// ---------- 0.9.0：NLP 2.0 ----------
+
+test('0.8.2 认不出来的日期：2026-11-20、2026/11/20、周末、带年份的“2026年12月5号”', () => {
+  assert.deepEqual(q('2026-11-20 交报告'), ['交报告', '2026-11-20', '', '']);
+  assert.deepEqual(q('2026/11/20 交报告'), ['交报告', '2026-11-20', '', '']);
+  assert.deepEqual(q('2026.11.20 交报告'), ['交报告', '2026-11-20', '', '']);
+  assert.deepEqual(q('交报告 2026-1-5'), ['交报告', '2026-01-05', '', '']);
+  assert.deepEqual(q('2026年12月5号 考试'), ['考试', '2026-12-05', '', '']);
+  assert.deepEqual(q('2027年1月3日下午2点 答辩'), ['答辩', '2027-01-03', '14:00', '']);
+  assert.deepEqual(q('周末 大扫除'), ['大扫除', '2026-11-14', '', '']);
+  assert.deepEqual(q('这周末 大扫除'), ['大扫除', '2026-11-14', '', '']);
+  assert.deepEqual(q('下周末 爬山'), ['爬山', '2026-11-21', '', '']);
+  // 今天就是周末：周六、周日说“周末”都是今天
+  assert.equal(parseQuick('周末 大扫除', new Date(2026, 10, 14, 9, 0)).date, '2026-11-14');
+  assert.equal(parseQuick('周末 大扫除', new Date(2026, 10, 15, 9, 0)).date, '2026-11-15');
+  // “周日 周末复盘”里的日期是周日，“周末”是标题
+  assert.deepEqual(q('周日 周末复盘'), ['周末复盘', '2026-11-15', '', '']);
+  // 写全了的日期后面跟时间段，不会被当成时间
+  assert.deepEqual(q('2026-11-20 14:00-15:30 评审'), ['评审', '2026-11-20', '14:00', '15:30']);
+});
+
+test('写全了却不存在的日期：不当日期，也不退回去认后半截', () => {
+  ['2026-02-30 聚餐', '2026年2月30号 聚餐', '2026/13/01 聚餐'].forEach((s) => assert.deepEqual(q(s), [s, '', '', ''], s));
+  // 版本号、电话这类带横线的数字不是日期
+  ['装 3.11.2 的包', '打 010-12345678 问问'].forEach((s) => assert.deepEqual(q(s), [s, '', '', ''], s));
+});
+
+test('toMinutes：下午 12 点是正午，晚上 1 点是后半夜', () => {
+  assert.deepEqual(q('下午12点 吃饭'), ['吃饭', '', '12:00', '']);
+  assert.deepEqual(q('下午12点半 吃饭'), ['吃饭', '', '12:30', '']);
+  assert.deepEqual(q('晚上1点 看球'), ['看球', '', '01:00', '']);
+  assert.deepEqual(q('晚上4点 看球'), ['看球', '', '04:00', '']);
+  // 没变的：晚上 12 点记成 23:59，晚上 8 点是 20 点，下午 1 点是 13 点，中午 12 点是 12 点
+  assert.deepEqual(q('晚上12点 跨年'), ['跨年', '', '23:59', '']);
+  assert.deepEqual(q('晚上8点 聚餐'), ['聚餐', '', '20:00', '']);
+  assert.deepEqual(q('下午1点 开会'), ['开会', '', '13:00', '']);
+  assert.deepEqual(q('中午12点 吃饭'), ['吃饭', '', '12:00', '']);
+});
+
+const full = (s, off) => { const r = parseQuick(s, base, off); return [r.title, r.date, r.time, r.endTime, r.rrule, r.repeatLabel, r.place]; };
+
+test('一句话同时拆出重复、日期、起止时间、地点、标题', () => {
+  assert.deepEqual(full('每周二四 18:00-19:30 立德407 机器学习'), ['机器学习', '2026-11-10', '18:00', '19:30', 'FREQ=WEEKLY;BYDAY=TU,TH', '每周二、四', '立德407']);
+  assert.deepEqual(full('每周一、三、五 早上7点 晨跑'), ['晨跑', '2026-11-11', '07:00', '', 'FREQ=WEEKLY;BYDAY=MO,WE,FR', '每周一、三、五', '']);
+  assert.deepEqual(full('每周二和周四 下午3点 在图书馆 自习'), ['自习', '2026-11-10', '15:00', '', 'FREQ=WEEKLY;BYDAY=TU,TH', '每周二、四', '图书馆']);
+  assert.deepEqual(full('每天早上8点 吃药'), ['吃药', '2026-11-10', '08:00', '', 'FREQ=DAILY', '每天', '']);
+  assert.deepEqual(full('每个工作日 9点 站会'), ['站会', '2026-11-10', '09:00', '', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', '工作日', '']);
+  assert.deepEqual(full('每周末 大扫除'), ['大扫除', '2026-11-14', '', '', 'FREQ=WEEKLY;BYDAY=SA,SU', '每周末', '']);
+  assert.deepEqual(full('每月15号 交房租'), ['交房租', '2026-11-15', '', '', 'FREQ=MONTHLY', '每月15日', '']);
+  assert.deepEqual(full('每年5月20日 纪念日'), ['纪念日', '2027-05-20', '', '', 'FREQ=YEARLY', '每年5月20日', '']);
+  assert.deepEqual(full('2026.11.20 14:00-15:30 明商208 答辩'), ['答辩', '2026-11-20', '14:00', '15:30', '', '', '明商208']);
+  // 另写了日期的以写的为准
+  assert.deepEqual(full('每周二四 11月17日 18:00 课'), ['课', '2026-11-17', '18:00', '', 'FREQ=WEEKLY;BYDAY=TU,TH', '每周二、四', '']);
+  // “每周”没说周几：日期留空，调用方按当前看的那天算
+  assert.deepEqual(full('每周 例会'), ['例会', '', '', '', 'FREQ=WEEKLY', '每周', '']);
+});
+
+test('容易认错的：“每周二四点”的四是四点；“在线会议”“高数”不是地点', () => {
+  assert.deepEqual(full('每周二四点 开会'), ['开会', '2026-11-10', '16:00', '', 'FREQ=WEEKLY;BYDAY=TU', '每周二', '']);
+  assert.deepEqual(full('明天下午2点 在线会议'), ['在线会议', '2026-11-11', '14:00', '', '', '', '']);
+  assert.deepEqual(full('立德407'), ['立德407', '', '', '', '', '', '']);           // 只有一个词：它就是标题
+  assert.deepEqual(full('复习高数 第3章'), ['复习高数 第3章', '', '', '', '', '', '']);
+  assert.equal(parseQuick('每周五前 交周报', base).isDeadline, true);
+  assert.equal(parseQuick('每周五前 交周报', base).title, '交周报');
+});
+
+test('关掉某一类识别：那一段原样留在标题里（点掉预览里的小胶囊）', () => {
+  const s = '每周二四 18:00-19:30 立德407 机器学习';
+  assert.deepEqual(full(s, { repeat: true }), ['每周二四 机器学习', '', '18:00', '19:30', '', '', '立德407']);
+  assert.deepEqual(full(s, { time: true }), ['18:00-19:30 机器学习', '2026-11-10', '', '', 'FREQ=WEEKLY;BYDAY=TU,TH', '每周二、四', '立德407']);
+  assert.deepEqual(full(s, { place: true }), ['立德407 机器学习', '2026-11-10', '18:00', '19:30', 'FREQ=WEEKLY;BYDAY=TU,TH', '每周二、四', '']);
+  assert.deepEqual(full(s, { date: true }), ['机器学习', '', '18:00', '19:30', 'FREQ=WEEKLY;BYDAY=TU,TH', '每周二、四', '立德407']);
+  assert.deepEqual(full('明天下午3点 开会', { date: true }), ['明天 开会', '', '15:00', '', '', '', '']);
+  assert.deepEqual(full('30分钟后 喝水', { time: true }), ['30分钟后 喝水', '', '', '', '', '', '']);
+  // 老的调用方式（不传第三个参数）不受影响
+  assert.deepEqual(q('明天下午2点到4点 开会'), ['开会', '2026-11-11', '14:00', '16:00']);
+});

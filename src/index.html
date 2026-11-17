@@ -26,6 +26,11 @@
 
         <input id="p-title" class="field title" type="text" placeholder="标题" aria-label="标题" autocomplete="off">
         <p id="p-ro" class="hint" hidden>重复日程，请在 Apple 日历里修改</p>
+        <div id="p-clash" class="clash-row" role="status" hidden>
+          <i class="clash-ico" aria-hidden="true"></i>
+          <span id="p-clash-text" class="grow ellipsis"></span>
+          <button id="p-postpone" type="button" class="pill mini tap" data-act="p-postpone" data-tip="挪到这天往后第一个放得下的空档"></button>
+        </div>
 
         <div id="p-toggles" class="row gap8">
           <button id="p-done" type="button" class="pill tap" data-act="p-done" aria-pressed="false">完成</button>
@@ -90,6 +95,12 @@
             </select>
             <input id="p-until" class="field" type="date" aria-label="结束日期" hidden>
             <input id="p-rcount" class="field" type="number" min="1" max="999" step="1" inputmode="numeric" aria-label="重复次数" hidden>
+          </div>
+        </div>
+        <div id="p-hol-row" class="frow" hidden>
+          <span aria-hidden="true"></span>
+          <div class="row gap8">
+            <button id="p-hol" type="button" class="pill small tap" data-act="p-hol" aria-pressed="false" data-tip="落在法定节假日的那几次自动跳过">节假日跳过</button>
           </div>
         </div>
         <div class="frow">
@@ -163,6 +174,7 @@
         <div class="seg" id="s-palette">
           <button type="button" class="tap" data-act="palette" data-v="indigo">默认</button>
           <button type="button" class="tap" data-act="palette" data-v="graphite">石墨灰</button>
+          <button type="button" class="tap" data-act="palette" data-v="wall" data-tip="从壁纸里取主色，配出强调色和玻璃的底色">跟随壁纸</button>
         </div>
       </div>
 
@@ -178,6 +190,7 @@
       </div>
 
       <div id="s-switches" class="col"></div>
+      <p id="s-keys" class="hint" role="status" hidden></p>
 
       <div class="block">
         <div class="row gap6">
@@ -235,6 +248,32 @@
         </div>
         </div></div></div>
         <p id="s-status" class="hint" role="status"></p>
+      </div>
+
+      <div class="block">
+        <div class="row gap6">
+          <h2>备份</h2>
+          <button type="button" class="help" data-tip="导出：完整备份（.json）或标准日历文件（.ics），存到“下载”文件夹。&#10;导入：选一个 .json / .ics，或者直接把文件拖到小组件上；先看预览，点“导入”才写。&#10;导入的日程只存本机，不会传到 iCloud。" aria-label="说明">?</button>
+        </div>
+        <div class="row gap6 wrap">
+          <button type="button" class="pill small tap" data-act="export-json">导出备份</button>
+          <button type="button" class="pill small tap" data-act="export-ics">导出 .ics</button>
+          <button type="button" class="pill small tap" data-act="import-pick">导入</button>
+          <input id="s-file" type="file" accept=".json,.ics,application/json,text/calendar" aria-label="选择要导入的文件" hidden>
+        </div>
+        <div id="s-import" class="import col gap8" hidden>
+          <div class="row gap6"><span id="s-import-name" class="strong grow ellipsis"></span></div>
+          <p id="s-import-text" class="hint" role="status"></p>
+          <div id="s-import-clash" class="seg" role="group" aria-label="冲突的怎么办" hidden>
+            <button type="button" class="tap" data-act="import-clash" data-v="both">都保留</button>
+            <button type="button" class="tap" data-act="import-clash" data-v="replace">用导入的</button>
+            <button type="button" class="tap" data-act="import-clash" data-v="skip">跳过</button>
+          </div>
+          <div class="row gap8">
+            <button id="s-import-go" type="button" class="pill small solid tap" data-act="import-go">导入</button>
+            <button type="button" class="pill small tap" data-act="import-cancel">取消</button>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -319,6 +358,7 @@
             <div class="sec-head">
               <h2><button type="button" class="sec-fold tap" data-act="fold" data-k="ev" aria-expanded="true" aria-controls="events" data-tip="点标题折叠 / 展开"><span>日程</span><svg class="chev" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5.5L7 9l3.5-3.5"/></svg><span id="ev-meta" class="meta"></span></button></h2>
               <span class="grow"></span>
+              <button id="ev-free" type="button" class="free tap" data-act="free-add" data-tip="今天下一个空档，点一下在这里新建" hidden></button>
               <button type="button" class="icon small tap" data-act="add-event" aria-label="新建日程">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
               </button>
@@ -370,11 +410,12 @@
 
       <form id="quick" class="quick">
         <input id="quick-input" type="text" placeholder="记一笔" aria-label="快速记录" autocomplete="off">
-        <button type="button" class="help" data-tip="回车保存。带具体时间的存成日程，比如“明天下午2点到4点 开会”；其余存成待办。&#10;没写日期就存到当前看的那天。&#10;在任何地方按 Alt + Q 也能快速记录。" aria-label="说明">?</button>
+        <button type="button" class="help" data-tip="回车保存。带具体时间的存成日程，比如“明天下午2点到4点 开会”；其余存成待办。&#10;重复、地点也认：“每周二四 18:00-19:30 立德407 机器学习”。认出来的排在下面，点一下某个就是不算它。&#10;没写日期就存到当前看的那天。&#10;在任何地方按 Alt + Q 也能快速记录。" aria-label="说明">?</button>
         <button type="submit" class="quick-btn tap" aria-label="添加">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
         </button>
       </form>
+      <div id="quick-chips" class="qchips" role="group" aria-label="识别到的内容" hidden></div>
     </main>
 
     <!-- 展开的月视图 -->
@@ -394,6 +435,9 @@
         <button id="big-next" type="button" class="icon tap" data-act="next-month" aria-label="下个月">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l5 5-5 5"/></svg>
         </button>
+        <button id="big-side" type="button" class="icon tap" data-act="side" aria-pressed="false" aria-label="待办栏" data-tip="待办栏：把待办拖进时间轴排成时间块" hidden>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="13" height="12" rx="3"/><path d="M11 3v12M5 7h3M5 10h3"/></svg>
+        </button>
         <div class="seg mini" role="group" aria-label="视图">
           <button id="big-v-month" type="button" class="tap" data-act="big-view" data-v="month" aria-pressed="true">月</button>
           <button id="big-v-week" type="button" class="tap" data-act="big-view" data-v="week" aria-pressed="false">周</button>
@@ -403,9 +447,14 @@
         </button>
       </div>
       <div id="week" class="wkv" role="group" aria-label="周视图" hidden>
-        <div id="week-head" class="week-head"></div>
-        <div id="week-allday" class="week-allday scroll"></div>
-        <div id="week-body" class="week-body scroll"><div id="week-inner" class="week-inner"></div></div>
+        <div id="week-main" class="wk-main">
+          <div id="week-head" class="week-head"></div>
+          <div id="week-allday" class="week-allday scroll"></div>
+          <div id="week-body" class="week-body scroll"><div id="week-inner" class="week-inner"></div></div>
+        </div>
+        <aside id="week-side" class="wk-side" aria-label="待办栏" hidden>
+          <div id="week-side-list" class="wk-side-list scroll"></div>
+        </aside>
       </div>
       <div id="month-days" class="weekdays wide" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
       <div id="month-wrap" class="big-wrap">
@@ -463,7 +512,24 @@
       </div>
       <div id="search-list" class="col scroll" role="listbox" aria-label="搜索结果"></div>
     </section>
+
+    <!-- Ctrl + K 快捷指令条：平时不显示 -->
+    <section id="cmd" class="layer from-scale" aria-label="快捷指令" aria-hidden="true">
+      <div class="row gap8 search-head">
+        <label class="quick search-field">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6l4 4-4 4M11 14h5"/></svg>
+          <input id="cmd-input" type="text" placeholder="指令" autocomplete="off" spellcheck="false" aria-label="快捷指令" role="combobox" aria-autocomplete="list" aria-controls="cmd-list" aria-expanded="true">
+        </label>
+        <button type="button" class="icon tap" data-act="cmd-close" aria-label="关闭" data-tip="关闭（Esc）">
+          <svg width="18" height="18" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>
+        </button>
+      </div>
+      <div id="cmd-list" class="col scroll" role="listbox" aria-label="指令"></div>
+    </section>
   </div>
+
+  <!-- 贴边自动收起时露在屏幕边上的那条细线 -->
+  <div id="edge-bar" aria-hidden="true"><i></i></div>
 
   <!-- 贴边胶囊 -->
   <button id="capsule" type="button" class="layer from-edge" data-act="expand" aria-label="展开小组件">
@@ -488,6 +554,11 @@
 <script src="search.js"></script>
 <script src="countdown.js"></script>
 <script src="week.js"></script>
+<script src="slots.js"></script>
+<script src="undo.js"></script>
+<script src="sync.js"></script>
+<script src="backup.js"></script>
+<script src="monet.js"></script>
 <script src="caldav.js"></script>
 <script src="app.js"></script>
 </body>

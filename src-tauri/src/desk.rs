@@ -20,13 +20,16 @@
 //    不用等下一次定时检查。
 //
 // 直接声明用到的几个系统函数，不引入额外依赖。句柄一律按 isize 传。
+//
+// 0.9.0 起，程序里别的要直接问系统的小事也放在这个文件的末尾（main.rs 里不再声明系统函数）：
+// 桌面壁纸的路径和背景色、注册表里的几个值、显示器的范围和工作区、光标在哪块屏上。
 
 #![allow(non_snake_case, dead_code)]
 
 #[cfg(windows)]
 mod imp {
     use std::ffi::c_void;
-    use std::ptr::null;
+    use std::ptr::{null, null_mut};
     use std::sync::atomic::{AtomicIsize, Ordering};
     use std::sync::OnceLock;
 
@@ -40,7 +43,8 @@ mod imp {
     const SWP_NOSENDCHANGING: u32 = 0x0400;
     /// 只改前后顺序、不激活、不发“即将改变位置”的通知
     /// （这样窗口框架里“永远置底”的拦截不会把我们的调整改回去）。
-    const ZPOS: u32 = SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING;
+    const ZPOS: u32 =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING;
     const GW_HWNDNEXT: u32 = 2;
     const GW_OWNER: u32 = 4;
     /// 窗口的“主人”存在这个位置（名字里带 PARENT，实际是 owner）。
@@ -84,13 +88,26 @@ mod imp {
     #[link(name = "user32")]
     extern "system" {
         fn GetShellWindow() -> isize;
-        fn FindWindowExW(parent: isize, after: isize, class: *const u16, title: *const u16) -> isize;
+        fn FindWindowExW(
+            parent: isize,
+            after: isize,
+            class: *const u16,
+            title: *const u16,
+        ) -> isize;
         fn IsWindowVisible(hwnd: isize) -> i32;
         fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
         fn GetTopWindow(hwnd: isize) -> isize;
         fn GetWindow(hwnd: isize, cmd: u32) -> isize;
         fn GetWindowLongW(hwnd: isize, index: i32) -> i32;
-        fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        fn SetWindowPos(
+            hwnd: isize,
+            after: isize,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
         fn RegisterClassW(class: *const WndClassW) -> u16;
         fn CreateWindowExW(
             ex_style: u32,
@@ -125,7 +142,12 @@ mod imp {
 
     #[link(name = "dwmapi")]
     extern "system" {
-        fn DwmSetWindowAttribute(hwnd: isize, attribute: u32, value: *const c_void, size: u32) -> i32;
+        fn DwmSetWindowAttribute(
+            hwnd: isize,
+            attribute: u32,
+            value: *const c_void,
+            size: u32,
+        ) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -149,7 +171,12 @@ mod imp {
 
     /// 哨兵窗口：拒绝一切不是我们自己发起的前后顺序变化，老实待在最底层。
     /// 系统想挪它，说明桌面附近的顺序在变，顺手叫醒循环看一眼。
-    unsafe extern "system" fn sentinel_proc(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize {
+    unsafe extern "system" fn sentinel_proc(
+        hwnd: isize,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize {
         if msg == WM_WINDOWPOSCHANGING && lparam != 0 {
             let pos = lparam as *mut WindowPos;
             if (*pos).flags & SWP_NOZORDER == 0 {
@@ -162,7 +189,15 @@ mod imp {
     }
 
     /// 前台窗口变了（按 Win + D、点开别的窗口都会触发）。
-    unsafe extern "system" fn on_foreground(_hook: isize, _event: u32, _hwnd: isize, _object: i32, _child: i32, _thread: u32, _time: u32) {
+    unsafe extern "system" fn on_foreground(
+        _hook: isize,
+        _event: u32,
+        _hwnd: isize,
+        _object: i32,
+        _child: i32,
+        _thread: u32,
+        _time: u32,
+    ) {
         wake();
     }
 
@@ -233,14 +268,20 @@ mod imp {
                     WINEVENT_OUTOFCONTEXT,
                 );
                 let yes: i32 = 1;
-                DwmSetWindowAttribute(ours, DWMWA_EXCLUDED_FROM_PEEK, &yes as *const i32 as *const c_void, 4);
+                DwmSetWindowAttribute(
+                    ours,
+                    DWMWA_EXCLUDED_FROM_PEEK,
+                    &yes as *const i32 as *const c_void,
+                    4,
+                );
                 hwnd
             };
             let modern = unsafe {
                 let user32 = wide("user32");
                 let module = GetModuleHandleW(user32.as_ptr());
                 // 这个导出函数从 24H2 才有，用它判断系统版本
-                module != 0 && GetProcAddress(module, b"GetCurrentMonitorTopologyId\0".as_ptr()) != 0
+                module != 0
+                    && GetProcAddress(module, b"GetCurrentMonitorTopologyId\0".as_ptr()) != 0
             };
             Some(Desk {
                 sentinel,
@@ -279,7 +320,15 @@ mod imp {
                 }
                 self.adopted.store(shell, Ordering::Relaxed);
                 // 重新排一次位置：放到最底层，系统会把它摆在主人（桌面）的正上方
-                SetWindowPos(self.ours, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                SetWindowPos(
+                    self.ours,
+                    HWND_BOTTOM,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
                 true
             }
         }
@@ -344,7 +393,8 @@ mod imp {
             }
             unsafe {
                 // 从图标窗口往下找哨兵，找得到说明哨兵在它下面
-                IsWindowVisible(host) != 0 && FindWindowExW(0, host, self.class.as_ptr(), null()) != 0
+                IsWindowVisible(host) != 0
+                    && FindWindowExW(0, host, self.class.as_ptr(), null()) != 0
             }
         }
 
@@ -381,11 +431,214 @@ mod imp {
             }
         }
     }
+
+    // ---------- 别的要直接问系统的小事 ----------
+
+    const SPI_GETDESKWALLPAPER: u32 = 0x0073;
+    /// 桌面的背景色（COLOR_DESKTOP，也叫 COLOR_BACKGROUND）。
+    const COLOR_DESKTOP: i32 = 1;
+    /// HKEY_CURRENT_USER：头文件里是 (HKEY)(ULONG_PTR)((LONG)0x80000001)，64 位上要带符号扩展。
+    const HKCU: isize = 0x8000_0001u32 as i32 as isize;
+    const RRF_RT_REG_SZ: u32 = 0x0000_0002;
+    const RRF_RT_REG_BINARY: u32 = 0x0000_0008;
+    /// 不在任何显示器上时，取最近的那块。
+    const MONITOR_DEFAULTTONEAREST: u32 = 2;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Rect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+
+    #[repr(C)]
+    struct MonitorInfo {
+        size: u32,
+        monitor: Rect,
+        work: Rect,
+        flags: u32,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn SystemParametersInfoW(action: u32, param: u32, data: *mut c_void, win_ini: u32) -> i32;
+        fn GetSysColor(index: i32) -> u32;
+        fn GetCursorPos(point: *mut Point) -> i32;
+        fn MonitorFromPoint(point: Point, flags: u32) -> isize;
+        fn MonitorFromWindow(hwnd: isize, flags: u32) -> isize;
+        fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegGetValueW(
+            key: isize,
+            sub_key: *const u16,
+            value: *const u16,
+            flags: u32,
+            kind: *mut u32,
+            data: *mut c_void,
+            size: *mut u32,
+        ) -> i32;
+    }
+
+    /// 系统记着的壁纸图片路径。桌面是纯色（没有壁纸）时是空串。
+    pub fn wallpaper_path() -> String {
+        let mut buf = [0u16; 520];
+        let ok = unsafe {
+            SystemParametersInfoW(
+                SPI_GETDESKWALLPAPER,
+                buf.len() as u32,
+                buf.as_mut_ptr() as *mut c_void,
+                0,
+            )
+        };
+        if ok == 0 {
+            return String::new();
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..len])
+    }
+
+    /// 桌面的背景色 [红, 绿, 蓝]（系统给的是 0x00BBGGRR）。
+    pub fn desktop_color() -> [u8; 3] {
+        let c = unsafe { GetSysColor(COLOR_DESKTOP) };
+        [
+            (c & 0xff) as u8,
+            ((c >> 8) & 0xff) as u8,
+            ((c >> 16) & 0xff) as u8,
+        ]
+    }
+
+    /// 当前用户注册表里的一个字符串值（REG_SZ）；没有、不是字符串都返回 None。
+    pub fn reg_text(sub: &str, name: &str) -> Option<String> {
+        let sub = wide(sub);
+        let name = wide(name);
+        let mut buf = [0u16; 520];
+        let mut size = (buf.len() * 2) as u32; // 按字节算
+        let status = unsafe {
+            RegGetValueW(
+                HKCU,
+                sub.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                null_mut(),
+                buf.as_mut_ptr() as *mut c_void,
+                &mut size,
+            )
+        };
+        if status != 0 {
+            return None;
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some(String::from_utf16_lossy(&buf[..len]))
+    }
+
+    /// 当前用户注册表里一个二进制值（REG_BINARY）的第一个字节。
+    pub fn reg_first_byte(sub: &str, name: &str) -> Option<u8> {
+        let sub = wide(sub);
+        let name = wide(name);
+        let mut buf = [0u8; 64];
+        let mut size = buf.len() as u32;
+        let status = unsafe {
+            RegGetValueW(
+                HKCU,
+                sub.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_BINARY,
+                null_mut(),
+                buf.as_mut_ptr() as *mut c_void,
+                &mut size,
+            )
+        };
+        if status != 0 || size == 0 {
+            return None;
+        }
+        Some(buf[0])
+    }
+
+    fn monitor_rects(monitor: isize) -> Option<([i32; 4], [i32; 4])> {
+        if monitor == 0 {
+            return None;
+        }
+        let zero = Rect {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        let mut info = MonitorInfo {
+            size: std::mem::size_of::<MonitorInfo>() as u32,
+            monitor: zero,
+            work: zero,
+            flags: 0,
+        };
+        if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
+            return None;
+        }
+        let flat = |r: &Rect| [r.left, r.top, r.right - r.left, r.bottom - r.top];
+        let (mon, work) = (flat(&info.monitor), flat(&info.work));
+        if work[2] > 0 && work[3] > 0 {
+            Some((mon, work))
+        } else {
+            None
+        }
+    }
+
+    /// 窗口所在显示器的整块范围和工作区（任务栏在哪一边、多高，都体现在工作区里）。物理像素 [x, y, 宽, 高]。
+    pub fn window_rects(hwnd: isize) -> Option<([i32; 4], [i32; 4])> {
+        monitor_rects(unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) })
+    }
+
+    /// 光标所在那块显示器的工作区。
+    pub fn cursor_work() -> Option<[i32; 4]> {
+        let mut point = Point { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut point) } == 0 {
+            return None;
+        }
+        monitor_rects(unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) }).map(|r| r.1)
+    }
+
+    /// 桌面（资源管理器的外壳窗口）在不在。资源管理器重启的那几秒里不在。
+    pub fn shell_ready() -> bool {
+        unsafe { GetShellWindow() != 0 }
+    }
 }
 
 #[cfg(not(windows))]
 mod imp {
     pub struct Desk;
+
+    pub fn wallpaper_path() -> String {
+        String::new()
+    }
+    pub fn desktop_color() -> [u8; 3] {
+        [0, 0, 0]
+    }
+    pub fn reg_text(_sub: &str, _name: &str) -> Option<String> {
+        None
+    }
+    pub fn reg_first_byte(_sub: &str, _name: &str) -> Option<u8> {
+        None
+    }
+    pub fn window_rects(_hwnd: isize) -> Option<([i32; 4], [i32; 4])> {
+        None
+    }
+    pub fn cursor_work() -> Option<[i32; 4]> {
+        None
+    }
+    pub fn shell_ready() -> bool {
+        true
+    }
 
     impl Desk {
         pub fn new(_ours: isize, _on_change: Box<dyn Fn() + Send + Sync>) -> Option<Desk> {
@@ -403,4 +656,7 @@ mod imp {
     }
 }
 
-pub use imp::Desk;
+pub use imp::{
+    cursor_work, desktop_color, reg_first_byte, reg_text, shell_ready, wallpaper_path,
+    window_rects, Desk,
+};

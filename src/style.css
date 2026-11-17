@@ -81,14 +81,24 @@
   --bg: 246 247 249;
   --wp-filter: blur(24px) saturate(0.8) brightness(1.1);
 }
+/* 跟随壁纸（0.9.0）：玻璃底色、强调色由 applyWallPalette() 按壁纸的主色算出来写在 html 上；这里只管不随壁纸变的那几样。
+   投影和深色字用中性的深灰，不带默认配色的紫。 */
+[data-palette="wall"] {
+  --shade: 10 10 12;
+  --sh: 10 10 12;
+  --deep-rgb: 24 24 28;
+  --pop: rgb(24 24 28 / 0.92);
+  --wp-filter: blur(24px) saturate(1.45);
+}
+[data-palette="wall"][data-theme="light"] { --wp-filter: blur(24px) saturate(1.3) brightness(1.1); }
 
 /* 深色字：玻璃够亮时用。由界面按“壁纸 + 玻璃”的实际明暗自动决定，
    所以浅色主题调得很透、壁纸又很暗时，会自动换回浅色字。 */
 [data-ink="dark"] {
   --fg: var(--deep-rgb);
   --shade: 255 255 255;
-  --accent: #c96f00;
-  --accent-rgb: 232 132 24;
+  --accent: #a35700;        /* 0.9.0：原来的 #c96f00 压在浅底上只有 3.4:1，调深到 5.3:1 */
+  --accent-rgb: 214 118 14;
   --accent-ink: #8a4a00;
   --on-accent: #ffffff;
   --mint: #1f7a55;
@@ -124,12 +134,16 @@ body {
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
   font-size: 14px;
   color: rgb(var(--fg));
-  /* 玻璃调得很透时，给文字垫一圈反色的晕，像桌面图标的名字那样，什么壁纸上都看得清 */
-  text-shadow: 0 0 2px rgb(var(--shade) / calc(0.85 * var(--halo))), 0 0 6px rgb(var(--shade) / calc(0.6 * var(--halo))), 0 1px 12px rgb(var(--shade) / calc(0.5 * var(--halo)));
+  /* 玻璃调得很透时，字直接压在壁纸上：白字配一层紧贴着、往下偏的黑影（和桌面图标的名字一个做法），笔画边缘是实的。
+     0.8.x 用的是 6px / 12px 的大圈晕，深色字配上白晕以后笔画发灰、像蒙了一层雾，0.9.0 起不用了。 */
+  text-shadow: 0 1px 2px rgb(0 0 0 / calc(0.68 * var(--halo))), 0 2px 6px rgb(0 0 0 / calc(0.35 * var(--halo)));
 }
+/* 深色字只在背后整块都很亮（雪地、白墙）时才用，这时只留一丝贴边的微光，不再铺白雾 */
+[data-ink="dark"] body { text-shadow: 0 0 1px rgb(255 255 255 / calc(0.6 * var(--halo))); }
 
 /* 仅在浏览器里预览时使用：给一块背景，方便看效果。 */
 .preview body { background: #3a3550 var(--wp) center / cover no-repeat; }
+.preview[data-palette="graphite"] body, .preview[data-palette="wall"] body { background-color: #34363a; }
 
 button, input, textarea, select { font: inherit; color: inherit; text-shadow: inherit; }
 /* 下拉框弹出来的那一列是系统画的、不透明的（不是玻璃）：选项不能跟着 select 继承玻璃上的字色，
@@ -277,9 +291,27 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .pill.solid, .pill.accent, .seg button[aria-pressed="true"], .icon[aria-pressed="true"], .quick-btn,
 .cday.sel, .num.today, .line.sel, .wk-day.today .wk-num, .wk-ev.sel, .wk-chip.sel, .wk-mark, .wk-ghost, #pop, .tip, .toast, #panel.bubble, .del.confirm,
 #p-done[aria-pressed="true"], #p-allday[aria-pressed="true"] { text-shadow: none; }
-/* 图标不吃文字描边，玻璃很透时单独垫一层影子。 */
-.bare .icon svg, .bare .box, .bare .help, .bare .row-star svg, .bare .chev { filter: drop-shadow(0 0 3px rgb(var(--shade) / calc(0.75 * var(--halo)))); }
+/* 图标不吃文字的影子，玻璃很透时单独垫一层（和文字一样：紧贴、往下偏）。 */
+.bare .icon svg, .bare .box, .bare .help, .bare .row-star svg, .bare .chev { filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / calc(0.6 * var(--halo)))); }
+[data-ink="dark"].bare .icon svg, [data-ink="dark"].bare .box, [data-ink="dark"].bare .help, [data-ink="dark"].bare .row-star svg, [data-ink="dark"].bare .chev { filter: drop-shadow(0 0 1px rgb(255 255 255 / calc(0.6 * var(--halo)))); }
 .bare .icon[aria-pressed="true"] svg, .bare #panel.bubble svg, .bare #panel.bubble .box, .bare #panel.bubble .help, .bare #pop svg { filter: none; }
+
+/* 很透的时候（.bare）字背后没有底色托着：
+   · 半透明的字色（已过去的日程、次要信息、星期、农历、占位字）和壁纸一混就发灰发脏，一律换成实色；
+     “已经过去”靠那个实心的灰点认，不靠把字调淡。
+   · 透明窗口里系统不给做 ClearType，12–13px 的细字是灰度抗锯齿，笔画发虚，字重提到 500。
+   只管小组件、迷你条、胶囊；详情和设置自己有底，不动。 */
+.bare #shell .ev.past, .bare #shell .meta, .bare #shell .soft, .bare #shell .week, .bare #shell .lz, .bare #shell .hint,
+.bare #shell .td.done .open, .bare #shell .cday.out, .bare #shell .wk-r1, .bare #shell .wk-hr, .bare #shell .wk-lab, .bare #shell .weekdays,
+.bare #shell h2, .bare #shell .badge, .bare #shell .now.empty .now-label, .bare #shell .overdue, .bare #shell .day-step .icon, .bare #shell .note-fold .peek,
+.bare #shell .cd-lead, .bare #shell .cd-tail, .bare #shell .pempty, .bare #shell .prow .ps, .bare #shell .prow.hit .pw, .bare #capsule .cap-left { color: rgb(var(--fg)); }
+.bare #shell .lz.festival { color: var(--accent-ink); }
+.bare #shell input::placeholder, .bare #shell textarea::placeholder { color: rgb(var(--fg)); opacity: 1; }
+.bare #shell .line .t, .bare #shell .wk-time, .bare #shell .wk-chip .t { opacity: 1; }
+.bare #shell .meta, .bare #shell .soft, .bare #shell .week, .bare #shell .lz, .bare #shell .ev .t, .bare #shell .ev .p, .bare #shell .count, .bare #shell .now-range,
+.bare #shell .now-foot, .bare #shell .td .meta, .bare #shell .weekdays, .bare #shell .wk-r1, .bare #shell .wk-hr, .bare #shell .line, .bare #shell .cd { font-weight: 500; }
+.bare #shell .ev .n, .bare #shell .td .name, .bare #shell .note textarea, .bare #shell .quick input { font-weight: 500; }
+.bare #shell #panel.bubble .meta, .bare #pop .ps { color: rgb(var(--fg) / 0.86); }
 
 /* ---------- 显隐过渡 ---------- */
 
@@ -371,7 +403,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .lz.term { color: rgb(var(--fg) / 0.86); }
 .lz.festival { color: var(--accent-ink); }
 .hol { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 14px; height: 14px; padding: 0 2px; border-radius: 5px; font-style: normal; font-size: 10px; font-weight: 700; line-height: 1; border: 1px solid transparent; }
-.hol.off { background: rgb(var(--mint-rgb) / 0.2); color: var(--mint); }
+.hol.off { background: rgb(var(--mint-rgb) / 0.3); color: var(--mint); font-weight: 800; }
+[data-ink="dark"] .hol.off { background: rgb(var(--mint-rgb) / 0.2); color: #14573c; }
 .hol.work { border-color: rgb(var(--fg) / 0.5); color: rgb(var(--fg) / 0.86); }
 /* 头部：三行字挤进原来的 46px 高，所以行距收一点；没有农历这一行时保持原样 */
 .date-btn.lz-on .col { gap: 1px; }
@@ -424,10 +457,12 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
   width: 100%;
   padding: 14px 16px;
   border-radius: 24px;
-  border: 1px solid rgb(var(--accent-rgb) / 0.5);
-  background: rgb(var(--accent-rgb) / 0.2);
+  /* 底色和边框跟着玻璃一起隐去（--glass）：拖到 0% 时不能剩一块黄褐色的“胶布” */
+  border: 1px solid rgb(var(--accent-rgb) / calc(0.5 * var(--glass)));
+  background: rgb(var(--accent-rgb) / calc(0.2 * var(--glass)));
   text-align: left;
 }
+.now.nobar .bar, #compact.nobar .bar { display: none; }
 .now-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .now-label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--accent-ink); }
 .now-range { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -465,7 +500,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .day-nav .pill { display: flex; align-items: center; gap: 4px; }
 .day-nav .prev { justify-self: start; padding: 0 14px 0 8px; }
 .day-nav .next { justify-self: end; padding: 0 8px 0 14px; }
-.overdue { flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 4px 0 12px; border-radius: 12px; background: rgb(var(--fg) / 0.08); font-size: 13px; color: rgb(var(--fg) / 0.86); }
+.overdue { flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 4px 0 12px; border-radius: 12px; background: rgb(var(--fg) / calc(0.08 * var(--glass))); font-size: 13px; color: rgb(var(--fg) / 0.86); }
 .overdue .pill.mini { flex: none; }
 .day-nav .pill[aria-pressed="true"] { border-color: transparent; background: var(--solid); color: var(--on-solid); text-shadow: none; }
 
@@ -486,6 +521,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .ev .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--cm); }
 .ev .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ev .p { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+/* 和别的日程时间重叠：圆点外面多一圈，悬停提示说和谁撞了 */
+.ev.clash .dot { border-color: var(--danger); outline: 1.5px solid var(--danger); outline-offset: 1.5px; }
 .ev.past { color: rgb(var(--fg) / 0.78); }
 .ev.past .dot { border-color: transparent; background: rgb(var(--fg) / 0.55); }
 .ev.now-on .n { font-weight: 700; }
@@ -532,7 +569,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .td.done .name { text-decoration: line-through; }
 .star { flex-shrink: 0; color: var(--accent); }
 
-.note { flex-shrink: 0; display: flex; flex-direction: column; margin-top: auto; padding: 6px 16px 12px; border-radius: 22px; border: 1px solid rgb(var(--note-rgb) / 0.4); background: rgb(var(--note-rgb) / 0.18); transition: padding 0.45s var(--curve); }
+.note { flex-shrink: 0; display: flex; flex-direction: column; margin-top: auto; padding: 6px 16px 12px; border-radius: 22px; border: 1px solid rgb(var(--note-rgb) / calc(0.4 * var(--glass))); background: rgb(var(--note-rgb) / calc(0.18 * var(--glass))); transition: padding 0.45s var(--curve); }
 .note.folded { padding-bottom: 6px; }
 .note-label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--note); }
 .note-fold { display: flex; align-items: center; gap: 4px; width: 100%; height: 30px; margin: 0 -8px; padding: 0 8px; box-sizing: content-box; border-radius: 10px; text-align: left; color: var(--note); }
@@ -540,7 +577,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .note.folded .peek { opacity: 1; }
 .note textarea { display: block; width: 100%; padding: 0; border: 0; outline: 0; resize: none; background: transparent; line-height: 1.6; field-sizing: content; min-height: 3.2em; max-height: 8em; overflow-y: auto; }
 
-.quick { flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 5px 0 18px; border-radius: 23px; border: 1px solid var(--field-edge); background: var(--field); }
+.quick { flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 5px 0 18px; border-radius: 23px; border: 1px solid color-mix(in srgb, var(--field-edge) calc(var(--glass) * 100%), transparent); background: color-mix(in srgb, var(--field) calc(var(--glass) * 100%), transparent); }
 .quick input { flex: 1 1 0; min-width: 0; height: 44px; border: 0; outline: 0; background: transparent; }
 .quick-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: var(--on-accent); }
 
@@ -570,7 +607,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 展开的月视图 ---------- */
 
-#big { position: absolute; top: 0; right: 0; width: 768px; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 20px; transform-origin: var(--dy) var(--dx); }
+#big { position: absolute; top: 0; right: 0; width: var(--big-w, 768px); height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 20px; transform-origin: var(--dy) var(--dx); }
 .big-head { flex-shrink: 0; height: 44px; }
 .big-head .pill { flex: none; padding-left: 16px; padding-right: 16px; }
 .big-head .pill.accent { padding-left: 12px; }
@@ -597,7 +634,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .line .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line .t { font-size: 10px; opacity: 0.82; font-variant-numeric: tabular-nums; }
 .line.more i { background: transparent; }
-.line.sel, .cell.out .line.sel { background-color: var(--c, var(--accent)); color: #1b1408; }
+/* 选中的块用日历自己的颜色做底，上面的字按对比度自动用白或黑（--oc，color() 算的）；没有日历色时底是强调色，字用 --on-accent */
+.line.sel, .cell.out .line.sel { background-color: var(--c, var(--accent)); color: var(--oc, var(--on-accent)); }
 
 /* ---------- 周视图：和月视图是同一块玻璃、同样大小，里面换成七列加时间轴 ---------- */
 
@@ -605,7 +643,15 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .seg.mini { flex: none; gap: 2px; padding: 2px; border-radius: 15px; }
 .seg.mini button { height: 26px; padding: 0 11px; border-radius: 13px; font-size: 12px; }
 
-.wkv { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.wkv { flex: 1 1 0; min-height: 0; display: flex; gap: 6px; }
+.wk-main { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+/* 待办栏（0.9.0）：还没排进时间轴的待办，拖到某一列的某个时刻就排成时间块。平时收着，头上那个按钮开关 */
+.wk-side { flex: none; width: 124px; min-height: 0; display: flex; flex-direction: column; padding: 4px; border-radius: 12px; background-color: var(--cell); }
+.wk-side-list { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; overflow-x: hidden; }
+.wk-side .wk-chip { height: 22px; }
+.wk-side .wk-chip.todo { grid-template-columns: 12px minmax(0, 1fr) auto; }
+.wk-side .pempty { padding: 6px 4px; font-size: 12px; }
+#big-side { width: 32px; height: 32px; }
 .week-head, .week-allday, .week-inner { display: grid; grid-template-columns: 40px repeat(7, minmax(0, 1fr)); column-gap: 4px; }
 /* 三块都一直留着滚动条的位置（表头那条画成透明的），七列才上下对得齐 */
 .week-head, .week-allday, .week-body { overflow-x: hidden; overflow-y: scroll; }
@@ -636,8 +682,8 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .wk-ev { position: absolute; z-index: 1; display: flex; flex-direction: column; overflow: hidden; padding: 2px 4px 2px 7px; border-radius: 7px; background-color: color-mix(in srgb, var(--cm) 30%, transparent); font-size: 11px; line-height: 14px; text-align: left; cursor: grab; transition: background-color 0.2s ease; }
 .wk-ev::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--cm); }
 .wk-ev:hover { background-color: color-mix(in srgb, var(--cm) 44%, transparent); }
-.wk-ev.sel { background-color: var(--c, var(--accent)); color: #1b1408; }
-.wk-ev.sel::before { background: rgb(27 20 8 / 0.35); }
+.wk-ev.sel { background-color: var(--c, var(--accent)); color: var(--oc, var(--on-accent)); }
+.wk-ev.sel::before { background: color-mix(in srgb, var(--oc, var(--on-accent)) 35%, transparent); }
 .wk-t { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ln, 1); font-weight: 600; word-break: break-all; }
 .wk-time { font-size: 10px; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .wk-ev.short { flex-direction: row; align-items: center; gap: 4px; padding-top: 0; padding-bottom: 0; }
@@ -647,6 +693,21 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .wk-grip::after { content: ""; position: absolute; left: 50%; bottom: 2px; width: 16px; height: 2px; margin-left: -8px; border-radius: 1px; background: currentColor; opacity: 0; transition: opacity 0.2s ease; }
 .wk-ev:hover .wk-grip::after, .wk-ev.dragging .wk-grip::after { opacity: 0.55; }
 .wk-ro { cursor: pointer; }
+/* 排成时间块的待办：虚线边，左上角一个可以勾的圈；勾了它，列表里那一条也是完成的（同一条） */
+.wk-ev.todo { background-color: rgb(var(--fg) / 0.12); border: 1px dashed rgb(var(--fg) / 0.5); padding-left: 22px; }
+.wk-ev.todo::before { display: none; }
+.wk-ev.todo:hover { background-color: rgb(var(--fg) / 0.2); }
+.wk-ev.todo.sel { background-color: var(--solid); color: var(--on-solid); border-color: transparent; }
+.wk-chk { position: absolute; left: 0; top: 0; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.wk-chk .wk-o { width: 10px; height: 10px; }
+.wk-ev.short .wk-chk { height: 100%; }
+/* 时间重叠的小记号：右上角两个叠着的小圆 */
+.wk-clash, .clash-ico { flex: none; position: relative; width: 10px; height: 7px; }
+.wk-clash::before, .wk-clash::after, .clash-ico::before, .clash-ico::after { content: ""; position: absolute; top: 0; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--danger); box-sizing: border-box; }
+.wk-clash::before, .clash-ico::before { left: 0; }
+.wk-clash::after, .clash-ico::after { right: 0; }
+.wk-ev .wk-clash { position: absolute; top: 3px; right: 3px; }
+.wk-ev.sel .wk-clash::before, .wk-ev.sel .wk-clash::after { border-color: currentColor; }
 
 .wk-chip { position: relative; flex-shrink: 0; display: grid; grid-template-columns: 3px minmax(0, 1fr) auto; align-items: center; column-gap: 4px; width: 100%; height: 18px; padding-right: 4px; border-radius: 6px; background-color: color-mix(in srgb, var(--cm) 30%, transparent); font-size: 11px; text-align: left; cursor: grab; transition: background-color 0.2s ease; }
 .wk-chip:hover { background-color: color-mix(in srgb, var(--cm) 44%, transparent); }
@@ -655,7 +716,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .wk-chip .t { font-size: 10px; opacity: 0.85; font-variant-numeric: tabular-nums; }
 .wk-chip.todo { grid-template-columns: 12px minmax(0, 1fr); padding-left: 4px; background-color: rgb(var(--fg) / 0.1); }
 .wk-chip.todo:hover { background-color: rgb(var(--fg) / 0.18); }
-.wk-chip.sel { background-color: var(--c, var(--accent)); color: #1b1408; }
+.wk-chip.sel { background-color: var(--c, var(--accent)); color: var(--oc, var(--on-accent)); }
 .wk-chip.todo.sel { background-color: var(--solid); color: var(--on-solid); }
 .wk-o { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; }
 .wk-it.done .wk-o { border-color: var(--mint); background: var(--mint); }
@@ -723,7 +784,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 详情面板 / 气泡 ---------- */
 
-#panel { position: absolute; z-index: 2; top: 24px; right: calc(40px + var(--w)); width: 380px; transform-origin: var(--dx) var(--dy); }
+#panel { position: absolute; z-index: 2; top: 24px; right: calc(40px + var(--w)); width: var(--panel-w, 380px); transform-origin: var(--dx) var(--dy); }
 #panel .zoom { position: relative; border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
 #panel .glass { --r: calc(40px + var(--w)); --t: 24px; }
 #panel-body { position: relative; display: flex; flex-direction: column; gap: 12px; max-height: var(--shell-h); overflow-y: auto; padding: 20px; }
@@ -738,6 +799,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 #panel.bubble .glass::before { display: none; }
 #panel.bubble .glass::after { background: var(--pop); }
 #panel.bubble #panel-body { gap: 8px; max-height: calc(min(640px, var(--shell-h)) - 24px); padding: 12px; font-size: 12px; }
+#panel.bubble .clash-row { min-height: 28px; padding: 0 4px 0 8px; font-size: 11px; }
 #panel.bubble .icon { width: 28px; height: 28px; }
 #panel.bubble .icon svg { width: 16px; height: 16px; }
 #panel.bubble .icon.ring { width: 30px; height: 30px; }
@@ -778,7 +840,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 
 /* ---------- 设置 ---------- */
 
-#settings { position: absolute; z-index: 2; top: 24px; right: calc(40px + var(--w)); width: 340px; border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
+#settings { position: absolute; z-index: 2; top: 24px; right: calc(40px + var(--w)); width: min(340px, var(--panel-w, 380px)); border-radius: 34px; box-shadow: 0 24px 60px var(--lift); }
 #settings .glass { --r: calc(40px + var(--w)); --t: 24px; }
 #settings-body { position: relative; display: flex; flex-direction: column; gap: 14px; max-height: var(--shell-h); overflow-y: auto; padding: 20px; }
 #s-connect .pill { width: 100%; }
@@ -855,7 +917,7 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 @media (max-height: 780px) {
   #widget { gap: 10px; padding: 16px 18px; }
   #day { gap: 8px; }
-  .day { font-size: 40px; }
+  #h-day { font-size: 40px; } /* 0.9.0：原来写的是 .day，把农历那一格（class 也带 day）一起放大到了 40px */
   .now { gap: 6px; padding: 10px 14px; border-radius: 20px; }
   .now-title { font-size: 17px; }
   .sec-head { height: 24px; }
@@ -907,3 +969,74 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .narrow #widget > header .date-btn { gap: 6px; }
 .narrow #widget > header .icon:not(.mini) { width: 32px; height: 32px; }
 .narrow #widget > header .icon.mini { width: 24px; }
+
+/* ---------- 0.9.0 ---------- */
+
+.wrap { flex-wrap: wrap; }
+
+/* 详情里：和谁撞了 + “顺延到 HH:MM” */
+.clash-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 4px 0 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); font-size: 13px; }
+.clash-row .pill.mini { flex: none; white-space: nowrap; }
+
+/* 今天下一个空档（“日程”标题那一行右边的小字，点一下在那里新建） */
+.free { flex: none; height: 24px; margin-right: 2px; padding: 0 8px; border-radius: 12px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: rgb(var(--fg) / 0.86); white-space: nowrap; }
+.narrow .free { display: none; }
+
+/* 记一笔下面的小胶囊：认出来的重复 / 日期 / 时间 / 地点，点一下就是“这个不算”（再点恢复）；和已有日程撞了是一条提示，点不了 */
+.qchips { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 4px; margin-top: -4px; min-width: 0; }
+.qchip { flex: 0 1 auto; max-width: 100%; height: 24px; padding: 0 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 12px; border: 1px solid var(--pill-edge); background: var(--field); font-size: 12px; font-weight: 600; line-height: 22px; font-variant-numeric: tabular-nums; }
+.qchip.off { border-style: dashed; background: transparent; font-weight: 500; text-decoration: line-through; opacity: 0.75; }
+.qchip.warn { border-color: color-mix(in srgb, var(--danger) 55%, transparent); background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); text-shadow: none; }
+
+/* Ctrl + K 快捷指令条：和搜索一样盖在整块玻璃上，平时不存在 */
+#cmd { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px; transform-origin: var(--dy) var(--dx); }
+#cmd-list { flex: 1 1 0; min-height: 0; gap: 2px; margin: 0 -8px; padding: 0 8px 4px; overflow-y: auto; }
+.prow.cmd { grid-template-columns: minmax(0, 1fr); min-height: 36px; padding: 4px 12px; }
+.prow.cmd.on { background-color: var(--sel); }
+
+/* 设置里的导入预览 */
+.import { padding: 12px; border-radius: 16px; border: 1px solid var(--field-edge); background: var(--field); }
+.import .seg button { height: 30px; font-size: 12px; }
+#s-import-go:disabled { opacity: 0.5; cursor: default; }
+/* 正拖着一个文件在小组件上方 */
+.dropping #shell { box-shadow: 0 0 0 2px var(--accent), 0 24px 60px var(--shadow); }
+
+/* 窄窗口（竖着的 1080p 配 150% 缩放，窗口只有 720 宽）：详情 / 设置在小组件旁边放不下，盖在小组件上面 */
+.stacked #panel:not(.bubble), .stacked #settings { right: 24px; width: min(380px, calc(100vw - 48px)); z-index: 5; }
+.stacked #panel:not(.bubble) .glass, .stacked #settings .glass { --r: 24px; }
+[data-corner$="l"].stacked #panel:not(.bubble), [data-corner$="l"].stacked #settings { right: auto; left: 24px; }
+
+/* 很矮的屏幕（1280×720、1366×768 配 150% 缩放，工作区只有 430–470 高）：再收一档，底下的“记一笔”不能被截掉 */
+@media (max-height: 540px) {
+  #widget { gap: 6px; padding: 12px 16px; }
+  #day { gap: 6px; }
+  #h-day { font-size: 34px; } /* 只缩日期数字；农历那一格的 class 也带 day */
+  .now { gap: 4px; padding: 8px 12px; border-radius: 16px; }
+  .now-title { font-size: 15px; }
+  .now-foot { min-height: 16px; font-size: 12px; }
+  #pips-row { display: none; }
+  .ev { height: 28px; }
+  .td, .td .check, .td .open, .row-star { min-height: 34px; }
+  .ev-sec:has(.ev) { min-height: 56px; }
+  #events { max-height: 60px; }
+  .sec.fill { min-height: 62px; }
+  .note { padding: 0 12px 4px; border-radius: 14px; }
+  .note textarea { min-height: 1.6em; max-height: 3.2em; }
+  .quick { height: 36px; }
+  .quick input { height: 34px; }
+  .quick-btn { width: 28px; height: 28px; }
+  .big-head { height: 36px; }
+  .cday { height: 34px; gap: 2px; }
+  #panel-body, #settings-body { gap: 8px; padding: 14px; }
+}
+
+/* ---------- 贴边自动收起 ---------- */
+/* 露在屏幕边上的那条细线：4 像素宽，高度是当前日程的进度，慢慢呼吸。只在收起时显示。 */
+#edge-bar { position: absolute; top: 24px; right: 0; width: 4px; height: min(var(--shell-h), 240px); border-radius: 2px 0 0 2px; overflow: hidden; background: rgb(var(--fg) / 0.22); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.3s var(--ease), visibility 0s linear 0.3s; }
+#edge-bar i { position: absolute; left: 0; right: 0; top: 0; height: calc(var(--edge-pct, 100) * 1%); background: var(--accent); animation: breathe 3.2s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+.edge-hidden #edge-bar { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 0.3s var(--ease) 0.25s, visibility 0s; }
+.edge-hidden #shell, .edge-hidden #capsule { transform: translateX(calc((var(--w) + 40px) * var(--sx))); opacity: 0; pointer-events: none; }
+.edge-hidden #panel, .edge-hidden #settings { opacity: 0; visibility: hidden; pointer-events: none; }
+[data-corner$="l"] #edge-bar { right: auto; left: 0; border-radius: 0 2px 2px 0; }
+[data-corner^="b"] #edge-bar { top: auto; bottom: 24px; }

@@ -255,6 +255,20 @@
     return extra.get(n) || builtin.get(n) || '';
   }
 
+  // 表里所有放假的日子（内置的加上 holidays.json 的，后者优先），'YYYY-MM-DD'，按先后排。
+  // “遇法定节假日自动跳过”的重复日程按它算要跳过哪几场。
+  function offDays() {
+    const all = new Map(builtin);
+    extra.forEach((v, k) => all.set(k, v));
+    const out = [];
+    all.forEach((v, n) => {
+      if (v !== 'off') return;
+      const d = new Date(n * 864e5);
+      out.push(d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'));
+    });
+    return out.sort();
+  }
+
   // ---------- 界面用 ----------
 
   // sub 是格子里那一小段字：节日 > 节气 > 初一显示月名 > 农历日
@@ -279,6 +293,7 @@
     festival: festival,
     holiday: holiday,
     setHolidays: setHolidays,
+    offDays: offDays,
     info: info,
   };
   global.Lunar = api;

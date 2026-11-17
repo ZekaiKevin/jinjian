@@ -1,8 +1,9 @@
 // 模拟外壳和一个假的 iCloud，用来在浏览器里走通同步流程
 (() => {
-  const log = (window.__log = { dav: [], notify: [], rects: 0, calls: [], hold: [], corner: [] });
-  // 测试用的开关：noEtag 上传成功但不回版本号；failPut 接下来几次上传返回 500；delay 每个请求慢多少毫秒
-  const opts = (window.__davOpts = { noEtag: false, failPut: 0, delay: 0 });
+  const log = (window.__log = { dav: [], notify: [], rects: 0, calls: [], hold: [], corner: [], exports: [], edge: [] });
+  // 测试用的开关：noEtag 上传成功但不回版本号；failPut 接下来几次上传返回 500；delay 每个请求慢多少毫秒；
+  // noSync 服务器不认 sync-token（sync-collection 一律 403，逼客户端整个重拉）；noCtag 不给 ctag / sync-token
+  const opts = (window.__davOpts = { noEtag: false, failPut: 0, delay: 0, noSync: false, noCtag: false });
   const listeners = (window.__listeners = {});
   let stored = window.__SEED || '';
   const now = new Date();
@@ -21,6 +22,18 @@
   const t = ymd(now);
   const hm = (delta) => { const d = new Date(now.getTime() + delta * 60000); return pad(d.getHours()) + pad(d.getMinutes()); };
   server[CAL + 'home/ONE.ics'] = { etag: '"h1"', ics: ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:ONE', 'DTSTART;TZID=Asia/Shanghai:' + t + 'T' + hm(-30) + '00', 'DTEND;TZID=Asia/Shanghai:' + t + 'T' + hm(40) + '00', 'SUMMARY:取体检报告', 'LOCATION:社区医院', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') };
+  // 增量同步（0.9.0）：ctag 和 sync-token 都按服务器上的内容算（地址 + 版本号），测试直接改 __server 也能被发现
+  const snaps = [];
+  const under = (base) => Object.keys(server).filter((k) => k.indexOf(base) === 0);
+  const mapOf = (base) => { const m = {}; under(base).forEach((k) => { m[k] = server[k].etag; }); return m; };
+  const sameMap = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function tokenOf(base) {
+    const m = mapOf(base);
+    let i = snaps.findIndex((x) => x.base === base && sameMap(x.map, m));
+    if (i < 0) { snaps.push({ base: base, map: m }); i = snaps.length - 1; }
+    return 'tok-' + i;
+  }
+  const ctagOf = (base) => 'ctag-' + tokenOf(base).slice(4);
   const ms = (parts) => '<?xml version="1.0"?><multistatus xmlns="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:a="http://apple.com/ns/ical/">' + parts + '</multistatus>';
   const x = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
   function davMock(req) {
@@ -38,8 +51,37 @@
       + '<response><href>/123/calendars/school/</href><propstat><prop><displayname>第三学期课表</displayname><resourcetype><collection/><c:calendar/></resourcetype><a:calendar-color>#FFCC00FF</a:calendar-color><c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set></prop></propstat></response>'
       + '<response><href>/123/calendars/home/</href><propstat><prop><displayname>个人</displayname><resourcetype><collection/><c:calendar/></resourcetype><a:calendar-color>#1BADF8FF</a:calendar-color><c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set></prop></propstat></response>'
       + '<response><href>/123/calendars/tasks/</href><propstat><prop><displayname>提醒</displayname><resourcetype><collection/><c:calendar/></resourcetype><c:supported-calendar-component-set><c:comp name="VTODO"/></c:supported-calendar-component-set></prop></propstat></response>') };
+    const body = req.body || '';
+    const base0 = req.url.replace('https://p42-caldav.icloud.com.cn/', 'https://p42-caldav.icloud.com.cn:443/');
+    const path = (k) => k.replace('https://p42-caldav.icloud.com.cn:443', '');
+    // 日历现在的版本
+    if (req.method === 'PROPFIND' && /getctag|sync-token/.test(body)) {
+      log.dav[log.dav.length - 1].kind = 'state';
+      if (opts.noCtag) return { status: 207, headers: [], body: ms('<response><href>' + path(base0) + '</href><propstat><prop/><status>HTTP/1.1 404 Not Found</status></propstat></response>') };
+      return { status: 207, headers: [], body: ms('<response xmlns:cs="http://calendarserver.org/ns/"><href>' + path(base0) + '</href><propstat><prop><cs:getctag>' + ctagOf(base0) + '</cs:getctag><sync-token>' + tokenOf(base0) + '</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat></response>') };
+    }
+    // 从某个 token 到现在变了哪些
+    if (req.method === 'REPORT' && /sync-collection/.test(body)) {
+      log.dav[log.dav.length - 1].kind = 'delta';
+      const m = /<d:sync-token>([^<]*)</.exec(body);
+      const old = m && /^tok-\d+$/.test(m[1]) ? snaps[Number(m[1].slice(4))] : null;
+      if (opts.noSync || !old || old.base !== base0) return { status: 403, headers: [], body: '' };
+      const now = mapOf(base0);
+      const parts = Object.keys(now).filter((k) => old.map[k] !== now[k]).map((k) => '<response><href>' + path(k) + '</href><propstat><prop><getetag>' + x(now[k]) + '</getetag></prop><status>HTTP/1.1 200 OK</status></propstat></response>')
+        .concat(Object.keys(old.map).filter((k) => !(k in now)).map((k) => '<response><href>' + path(k) + '</href><status>HTTP/1.1 404 Not Found</status></response>'));
+      return { status: 207, headers: [], body: ms(parts.join('') + '<sync-token>' + tokenOf(base0) + '</sync-token>') };
+    }
+    // 按地址取几条
+    if (req.method === 'REPORT' && /calendar-multiget/.test(body)) {
+      log.dav[log.dav.length - 1].kind = 'multiget';
+      const want = [];
+      body.replace(/<d:href>([^<]*)<\/d:href>/g, (all, h) => { want.push('https://p42-caldav.icloud.com.cn:443' + h); return all; });
+      const parts = want.filter((k) => server[k]).map((k) => '<response><href>' + path(k) + '</href><propstat><prop><getetag>' + x(server[k].etag) + '</getetag><c:calendar-data>' + x(server[k].ics) + '</c:calendar-data></prop></propstat></response>').join('');
+      return { status: 207, headers: [], body: ms(parts) };
+    }
     if (req.method === 'REPORT') {
-      const base = req.url.replace('https://p42-caldav.icloud.com.cn/', 'https://p42-caldav.icloud.com.cn:443/');
+      log.dav[log.dav.length - 1].kind = 'full';
+      const base = base0;
       const parts = Object.keys(server).filter((k) => k.indexOf(base) === 0).map((k) => '<response><href>' + k.replace('https://p42-caldav.icloud.com.cn:443', '') + '</href><propstat><prop><getetag>' + x(server[k].etag) + '</getetag><c:calendar-data>' + x(server[k].ics) + '</c:calendar-data></prop></propstat></response>').join('');
       return { status: 207, headers: [], body: ms(parts) };
     }
@@ -65,6 +107,14 @@
       log.calls.push(cmd);
       if (cmd === 'load_data') return stored;
       if (cmd === 'save_data') { stored = args.json; window.__stored = stored; return null; }
+      // iCloud 缓存单独一个文件（0.9.0）
+      if (cmd === 'load_remote_cache') return window.__cache || window.__CACHE_SEED || '';
+      if (cmd === 'save_remote_cache') { window.__cache = args.json; return null; }
+      if (cmd === 'export_file') { log.exports.push({ name: args.name, text: args.text }); return 'C:\\Users\\me\\Downloads\\' + args.name; }
+      if (cmd === 'wallpaper_info') return window.__WALLINFO || null;
+      if (cmd === 'get_autostart') return false;
+      if (cmd === 'hotkey_status') return window.__HOTKEYS || [];
+      if (cmd === 'set_edge' || cmd === 'set_edge_hidden') { log.edge.push([cmd, args]); return null; }
       if (cmd === 'wallpaper') { const r = await fetch(window.__WP); return await r.arrayBuffer(); }
       if (cmd === 'set_hit_rects') { log.rects = args.rects.length; log.lastRects = args.rects; return null; }
       if (cmd === 'set_hit_hold') { log.hold.push(args.hold); return null; }

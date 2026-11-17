@@ -124,7 +124,10 @@
       if (eq > 0) map[kv.slice(0, eq).toUpperCase()] = kv.slice(eq + 1);
     });
     if (!map.FREQ) return null;
-    const rule = { freq: map.FREQ.toUpperCase(), interval: Math.max(1, Number(map.INTERVAL || 1)), byday: [], bydayOrd: [], count: map.COUNT ? Number(map.COUNT) : 0, until: null, bymonthday: [], bymonth: [] };
+    // counted：规则里写了 COUNT。COUNT=0（或写坏了）是“一场都没有”，不能和“没写次数”混在一起
+    const counted = map.COUNT !== undefined;
+    const cnt = counted ? Math.floor(Number(map.COUNT)) : 0;
+    const rule = { freq: map.FREQ.toUpperCase(), interval: Math.max(1, Number(map.INTERVAL || 1)), byday: [], bydayOrd: [], count: cnt > 0 ? cnt : 0, counted: counted, until: null, bymonthday: [], bymonth: [] };
     if (map.BYDAY) {
       map.BYDAY.split(',').forEach((x) => {
         const m = /^([+-]?\d+)?([A-Z]{2})$/.exec(x.trim().toUpperCase());
@@ -207,7 +210,7 @@
         case 'DTSTART': ev.start = parseDT(p); break;
         case 'DTEND': ev.end = parseDT(p); break;
         case 'DURATION': ev.duration = parseDuration(p.value); break;
-        case 'RRULE': ev.rrule = parseRRule(p.value); break;
+        case 'RRULE': ev.rrule = parseRRule(p.value); ev.rruleText = p.value.trim(); break;
         case 'RECURRENCE-ID': ev.rid = parseDT(p); break;
         case 'EXDATE':
           p.value.split(',').forEach((v) => {
@@ -354,6 +357,10 @@
     return out;
   }
 
+  // 规则最多排几场：没写 COUNT 是不限；写了就按写的算，COUNT=0 是一场都没有（不能写成 0 || Infinity）
+  const maxOf = (r) => (r.counted || r.count ? Math.max(0, r.count || 0) : Infinity);
+  const untilMs = (r) => (r.until ? toDate(r.until).getTime() + (r.until.allDay ? DAY - 1 : 0) : Infinity);
+
   // 把一个日历条目（可能带重复规则和单次改动）展开成 [from, to] 之间的具体场次。
   function expand(events, from, to) {
     const all = [];
@@ -383,8 +390,8 @@
       const ov = new Map();
       mine.forEach((o) => ov.set(toDate(o.rid).getTime(), o));
       const ex = new Set(m.exdates.map((d) => toDate(d).getTime()));
-      const until = m.rrule.until ? toDate(m.rrule.until).getTime() + (m.rrule.until.allDay ? DAY - 1 : 0) : Infinity;
-      const max = m.rrule.count || Infinity;
+      const until = untilMs(m.rrule);
+      const max = maxOf(m.rrule);
       let count = 0;
       iterate(m, (wall) => {
         const dt = { allDay: m.start.allDay, utc: m.start.utc, tz: m.start.tz, offset: m.start.offset, wall: wall };
@@ -607,7 +614,56 @@
     return joinLines(out);
   }
 
-  // 删此次及以后：规则到这一场之前为止（有次数的改次数，被删掉的场次也算数），这之后的单独改动删掉
+  // 恢复被删掉的某一场：把主事件里对应的 EXDATE 拿掉（一行里写了好几个的只拿掉这一个）
+  function include(text, rid) {
+    const lines = linesOf(text);
+    const bs = blocks(lines);
+    const m = masterOf(bs);
+    if (!m) return text;
+    const zones = readZones(lines);
+    const ms = toDate(rid).getTime();
+    const out = [];
+    lines.forEach((l, i) => {
+      if (!(i > m.begin && i < m.end) || !/^EXDATE([;:]|$)/i.test(l.trim())) { out.push(l); return; }
+      const p = parseLine(l.trim());
+      if (!p) { out.push(l); return; }
+      const kept = p.value.split(',').filter((v) => {
+        const d = parseDT({ value: v, params: p.params });
+        if (!d) return true;
+        const z = d.tz && !tzKnown(d.tz) ? zones[d.tz] : null;
+        if (z && !z.dst && z.std !== null) d.offset = z.std;
+        return toDate(d).getTime() !== ms;
+      });
+      if (kept.length) out.push(l.trim().slice(0, l.trim().length - p.value.length) + kept.join(','));
+    });
+    return joinLines(out);
+  }
+
+  // rid 这一场之前，规则排出了几场：all 连被删掉的也算（改 COUNT 用），live 只算还在的（没被 EXDATE 排除、没被取消）。
+  // 不能拿 DTSTART 和这一场比：开始那天不在规则里时（周三建的“每周一”），DTSTART 比第一场早，却一场都不算。
+  function countBefore(text, rid) {
+    const evs = parse(text);
+    const m = evs.find((e) => !e.rid && e.rrule);
+    if (!m) return { all: 0, live: 0 };
+    const ms = toDate(rid).getTime();
+    const ex = new Set(m.exdates.map((d) => toDate(d).getTime()));
+    evs.forEach((e) => { if (e.rid && e.uid === m.uid && e.status === 'CANCELLED') ex.add(toDate(e.rid).getTime()); });
+    const until = untilMs(m.rrule);
+    const max = maxOf(m.rrule);
+    let all = 0;
+    let live = 0;
+    iterate(m, (wall) => {
+      const t = toDate({ allDay: m.start.allDay, utc: m.start.utc, tz: m.start.tz, offset: m.start.offset, wall: wall }).getTime();
+      if (t >= ms || t > until || all >= max) return false;
+      all += 1;
+      if (!ex.has(t)) live += 1;
+      return true;
+    });
+    return { all: all, live: live };
+  }
+
+  // 删此次及以后：规则到这一场之前为止（有次数的改次数，被删掉的场次也算数），这之后的单独改动删掉。
+  // 这一场之前一场都排不出来时返回 null：调用方删掉整条，不能写出 COUNT=0 / 早于第一场的 UNTIL。
   function endBefore(text, rid) {
     const lines = linesOf(text);
     const bs = blocks(lines);
@@ -616,10 +672,10 @@
     const ms = toDate(rid).getTime();
     const ev = parse(text).find((e) => !e.rid && e.rrule);
     if (!ev) return text;
+    const n = countBefore(text, rid).all;
+    if (n < 1) return null;
     let end;
     if (ev.rrule.count) {
-      const bare = Object.assign({}, ev, { exdates: [] });
-      const n = expand([bare], toDate(ev.start), new Date(ms - 1)).filter((o) => !o.part || o.part === 1).length;
       end = 'COUNT=' + n;
     } else if (ev.start.allDay) {
       end = 'UNTIL=' + ymdOf(new Date(ms - DAY));
@@ -637,6 +693,198 @@
       out.push(l);
     });
     return joinLines(out);
+  }
+
+  // ---------- 重复日程：整组改时间（“全部”）/ 从某一场起另开一组（“此次及以后”） ----------
+
+  const dayNoOf = (w) => Date.UTC(w.y, w.m - 1, w.d) / DAY;
+  const localWall = (d) => ({ y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate(), h: d.getHours(), mi: d.getMinutes(), s: 0 });
+  // 某一时刻在这个系列自己的写法里是几点（UTC / 带时区 / 文件自带的时区定义 / 浮动）
+  function wallIn(form, ms) {
+    let off;
+    if (form.utc) off = 0;
+    else if (form.offset !== undefined) off = form.offset;
+    else if (form.tz && tzKnown(form.tz)) off = tzOffsetMin(form.tz, ms);
+    else off = -new Date(ms).getTimezoneOffset();
+    const d = new Date(ms + off * 60000);
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() };
+  }
+  // 墙上时间挪 n 天；hm 给了就把时刻换掉
+  function moveWall(w, n, hm) {
+    const d = new Date(Date.UTC(w.y, w.m - 1, w.d + n));
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), h: hm ? hm[0] : w.h, mi: hm ? hm[1] : w.mi, s: hm ? 0 : w.s };
+  }
+  const wallPlusMin = (w, mins) => {
+    const d = new Date(Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi + mins, w.s));
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() };
+  };
+
+  // 规则跟着整组挪 dDays 天：每周几跟着转；按“第几个周几 / 每月几号 / 指定月份”排的规则挪了天就不是原来的意思了，做不了（返回 null）。
+  // until：把原来的结束时间换成新的写法；count：新的次数（不改传 0）。
+  function moveRule(text, dDays, until, count) {
+    const NAMES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+    const out = [];
+    let bad = false;
+    text.split(';').filter(Boolean).forEach((kv) => {
+      const eq = kv.indexOf('=');
+      const name = kv.slice(0, eq).toUpperCase();
+      const val = kv.slice(eq + 1);
+      if (name === 'UNTIL') { const u = until ? until(parseDT({ value: val, params: {} })) : val; if (u) out.push('UNTIL=' + u); return; }
+      if (name === 'COUNT') { out.push('COUNT=' + (count > 0 ? count : val)); return; }
+      if (!dDays) { out.push(kv); return; }
+      if (name === 'BYDAY') {
+        const days = val.split(',').map((x) => /^([+-]?\d+)?([A-Za-z]{2})$/.exec(x.trim()));
+        if (days.some((d) => !d || d[1] || NAMES.indexOf(d[2].toUpperCase()) < 0)) { bad = true; return; }
+        out.push('BYDAY=' + days.map((d) => NAMES[(((NAMES.indexOf(d[2].toUpperCase()) + dDays) % 7) + 7) % 7]).join(','));
+        return;
+      }
+      if (/^BY(MONTHDAY|MONTH|SETPOS|YEARDAY|WEEKNO)$/.test(name)) { bad = true; return; }
+      out.push(kv);
+    });
+    return bad ? null : out.join(';');
+  }
+
+  // 核心：以 rid 这一场为准，把整组的时间改成 f（{ date, start, end, allDay }）。
+  // opt.from：这一场现在显示的样子（{ date, start, end, allDay }），没变的那几样不动；
+  // opt.tail：只留 rid 及以后的（“此次及以后”拆出来的新系列），opt.uid 是它的新 UID；
+  // opt.tz：{ id, offsetMin }，全天改成有时间时按本机时区写。做不了返回 null。
+  function retime(text, rid, f, opt) {
+    const o = opt || {};
+    let lines = linesOf(text);
+    const bs = blocks(lines);
+    const m = masterOf(bs);
+    const evs = parse(text);
+    const ev = evs.find((e) => !e.rid && e.rrule);
+    if (!m || m.rid || !ev || !rid) return null;
+    const from = o.from || {};
+    const ridMs = toDate(rid).getTime();
+    const wasAll = !!ev.start.allDay;
+    const nowAll = !!f.allDay;
+    const tgt = fromLocal(f.date, nowAll ? '00:00' : (f.start || '09:00'));
+    const was = fromLocal(from.date || f.date, '00:00');
+    if (!tgt || !was) return null;
+    const dDays = Math.round(dayNoOf(localWall(tgt)) - dayNoOf(localWall(was)));
+    const retimed = wasAll !== nowAll || (!nowAll && (f.start || '') !== (from.start || ''));
+    const resized = retimed || (!nowAll && (f.end || '') !== (from.end || ''));
+    const oldDur = durationMin(ev);
+    let dur = oldDur;
+    if (nowAll && !wasAll) dur = 1440;
+    else if (!nowAll && resized) {
+      const e = fromLocal(f.date, f.end || '');
+      dur = f.end && e && e > tgt ? Math.round((e - tgt) / 60000) : 60;
+    }
+    let form;
+    let conv;
+    let hm = null;
+    if (wasAll && nowAll) {
+      form = { allDay: true, utc: false, tz: '' };
+      conv = (x) => Object.assign({}, form, { wall: moveWall(Object.assign(localWall(toDate(x)), { h: 0, mi: 0 }), dDays) });
+    } else if (!wasAll && nowAll) {
+      form = { allDay: true, utc: false, tz: '' };
+      conv = (x) => Object.assign({}, form, { wall: moveWall(Object.assign(localWall(toDate(x)), { h: 0, mi: 0 }), dDays) });
+    } else if (wasAll) {
+      if (!o.tz || !o.tz.id) return null;
+      form = { allDay: false, utc: false, tz: o.tz.id };
+      hm = [tgt.getHours(), tgt.getMinutes()];
+      conv = (x) => Object.assign({}, form, { wall: moveWall(localWall(toDate(x)), dDays, hm) });
+    } else {
+      form = { allDay: false, utc: !!ev.start.utc, tz: ev.start.tz || '' };
+      if (ev.start.offset !== undefined) form.offset = ev.start.offset;
+      if (retimed) { const w = wallIn(form, tgt.getTime()); hm = [w.h, w.mi]; }
+      conv = (x) => Object.assign({}, form, { wall: moveWall(wallIn(form, toDate(x).getTime()), dDays, hm) });
+    }
+    // 结束时间跟着挪：有时间的系列挪同样多的毫秒，全天的挪天数
+    const w0 = ev.start.wall;
+    const dMs = dDays * DAY + (hm && !wasAll ? ((hm[0] * 60 + hm[1]) - (w0.h * 60 + w0.mi)) * 60000 : 0);
+    const until = (u) => {
+      if (!u) return '';
+      if (form.allDay) return ymdOf(new Date(toDate(u).getTime() + dDays * DAY));
+      if (wasAll || u.allDay) {
+        const d = new Date(toDate(u).getTime() + dDays * DAY);
+        return u.allDay && !wasAll ? ymdOf(d) : fmtUTC(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59));
+      }
+      return fmtUTC(new Date(toDate(u).getTime() + dMs));
+    };
+    const before = o.tail ? countBefore(text, rid).all : 0;
+    const rule = moveRule(ev.rruleText || '', dDays, until, o.tail && ev.rrule.count ? Math.max(1, ev.rrule.count - before) : 0);
+    if (rule === null) return null;
+    const stamp = (name, dt) => propDT(name, dt);
+    const span = (start, mins) => (form.allDay
+      ? [stamp('DTSTART', start), stamp('DTEND', Object.assign({}, start, { wall: moveWall(start.wall, Math.max(1, Math.round(mins / 1440))) }))]
+      : [stamp('DTSTART', start), stamp('DTEND', Object.assign({}, start, { wall: wallPlusMin(start.wall, mins) }))]);
+    const mStart = o.tail ? conv(rid) : conv(ev.start);
+    const TIME = /^(DTSTART|DTEND|DURATION)([;:]|$)/i;
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const b = bs.find((x) => x.begin === i);
+      if (!b) { out.push(lines[i]); i += 1; continue; }
+      i = b.end + 1;
+      const own = b.rid ? evs.find((e) => e.rid && sameMs(e.rid, b.rid)) : null;
+      if (b !== m && (!b.rid || !own)) { lines.slice(b.begin, b.end + 1).forEach((l) => out.push(l)); continue; }
+      if (b !== m && o.tail && toDate(b.rid).getTime() < ridMs) continue;
+      // 这一场没单独改过时间（或者就是正在改的这一场）：时间跟着整组走；单独挪过的留着它自己的
+      const follows = b !== m && (sameMs(b.rid, rid) ? (retimed || wasAll !== nowAll) : (toDate(own.start).getTime() === toDate(own.rid).getTime() && durationMin(own) === oldDur));
+      const kept = [];
+      let depth = 0;
+      let seq = 0;
+      for (let k = b.begin + 1; k < b.end; k += 1) {
+        const l = lines[k];
+        const up = l.trim().toUpperCase();
+        if (up.indexOf('BEGIN:') === 0) depth += 1;
+        if (depth === 0) {
+          if (/^UID([;:]|$)/i.test(l) && o.tail) continue;
+          if (/^RECURRENCE-ID([;:]|$)/i.test(l)) continue;
+          if (b === m && /^(RRULE|EXDATE|DTSTAMP|LAST-MODIFIED|SEQUENCE)([;:]|$)/i.test(l)) { const q = /^SEQUENCE:(\d+)/i.exec(l); if (q) seq = Number(q[1]); continue; }
+          if ((b === m || follows) && TIME.test(l)) continue;
+        }
+        kept.push(l);
+        if (up.indexOf('END:') === 0) depth -= 1;
+      }
+      const head = ['BEGIN:VEVENT'];
+      if (o.tail) head.push('UID:' + o.uid);
+      if (b === m) {
+        span(mStart, dur).forEach((l) => head.push(l));
+        head.push('RRULE:' + rule);
+        ev.exdates.forEach((d) => { if (!o.tail || toDate(d).getTime() >= ridMs) head.push(stamp('EXDATE', conv(d))); });
+        head.push('DTSTAMP:' + fmtUTC(new Date()), 'SEQUENCE:' + (seq + 1), 'LAST-MODIFIED:' + fmtUTC(new Date()));
+      } else {
+        head.push(stamp('RECURRENCE-ID', conv(b.rid)));
+        if (follows) span(conv(b.rid), dur).forEach((l) => head.push(l));
+      }
+      head.concat(kept, ['END:VEVENT']).forEach((l) => out.push(l));
+    }
+    lines = out;
+    // 全天改成有时间：按本机时区写，文件里没有这个时区的定义就补一段（没有夏令时的才会走到这里）
+    if (wasAll && !nowAll && !readZones(lines)[o.tz.id]) {
+      const off = o.tz.offsetMin || 0;
+      const hhmm = (off < 0 ? '-' : '+') + pad(Math.floor(Math.abs(off) / 60)) + pad(Math.abs(off) % 60);
+      const at = lines.findIndex((l) => l.trim().toUpperCase() === 'BEGIN:VEVENT');
+      lines = lines.slice(0, at).concat(['BEGIN:VTIMEZONE', 'TZID:' + o.tz.id, 'BEGIN:STANDARD', 'DTSTART:19700101T000000', 'TZOFFSETFROM:' + hhmm, 'TZOFFSETTO:' + hhmm, 'END:STANDARD', 'END:VTIMEZONE'], lines.slice(at));
+    }
+    return joinLines(lines);
+  }
+
+  // 改“全部”的时间 / 日期 / 全天：整组一起挪，被删掉的那几场、单独改过的那几场都跟着对上。做不了返回 null。
+  function shiftSeries(text, rid, f, opt) {
+    return retime(text, rid, f, Object.assign({}, opt, { tail: false }));
+  }
+
+  // 改“此次及以后”：原系列到这一场之前为止（head），从这一场起另开一个新系列（tail，UID 是 opt.uid）。
+  // f 里的标题、地点、备注（可选提醒）写进新系列。这一场之前一场都没有时返回 { whole: true }，调用方按“全部”改。做不了返回 null。
+  function splitSeries(text, rid, f, opt) {
+    const o = opt || {};
+    const ev = parse(text).find((e) => !e.rid && e.rrule);
+    if (!ev) return null;
+    if (countBefore(text, rid).live < 1) return { whole: true, head: null, tail: null };
+    const head = endBefore(text, rid);
+    let tail = retime(text, rid, f, Object.assign({}, o, { tail: true }));
+    if (!head || !tail) return null;
+    const old = { title: ev.title, place: ev.place, notes: ev.notes };
+    const tf = { title: f.title === undefined ? old.title : f.title, place: f.place === undefined ? old.place : f.place, notes: f.notes === undefined ? old.notes : f.notes };
+    if (f.remind !== undefined) tf.remind = f.remind;
+    if (tf.title !== old.title || tf.place !== old.place || tf.notes !== old.notes || f.remind !== undefined) tail = patchSeries(tail, tf, old);
+    return { whole: false, head: head, tail: tail };
   }
 
   // 改全部（只改文字：标题、地点、备注，可选提醒；不碰时间、规则、例外）。
@@ -701,7 +949,9 @@
 
   const api = {
     parse: parse, expand: expand, build: build, patch: patch, toDate: toDate, unfold: unfold, parseRRule: parseRRule,
-    buildSeries: buildSeries, setOccurrence: setOccurrence, exclude: exclude, endBefore: endBefore, patchSeries: patchSeries,
+    buildSeries: buildSeries, setOccurrence: setOccurrence, exclude: exclude, include: include, endBefore: endBefore, patchSeries: patchSeries,
+    countBefore: countBefore, shiftSeries: shiftSeries, splitSeries: splitSeries,
+    escText: escText, unesc: unesc, parseLine: parseLine, fold: fold, durationMin: durationMin,
   };
   global.ICS = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

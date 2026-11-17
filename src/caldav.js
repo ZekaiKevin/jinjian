@@ -104,6 +104,70 @@
       return out;
     }
 
+    // ---------- 增量同步（0.9.0） ----------
+
+    // 日历现在的“版本”：ctag 一变就说明里面有东西动过；token 用来只问“从上次到现在变了哪些”。
+    // 服务器不支持（或这次没问到）就都是空的，调用方会老老实实整个重拉。
+    async function state(user, calHref) {
+      const r = await req('PROPFIND', calHref, {
+        user: user, headers: [['Depth', '0']],
+        body: '<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><cs:getctag/><d:sync-token/></d:prop></d:propfind>',
+      });
+      if (r.status >= 300) return { ctag: '', token: '' };
+      const doc = xml(r.body).documentElement;
+      return { ctag: text(doc, 'getctag'), token: text(doc, 'sync-token') };
+    }
+
+    // 从 token 那一刻到现在变了哪些：changed 是新增 / 改过的地址，removed 是服务器上已经没了的。
+    // token 过期、服务器不认（403 / 409 / 410 之类）时 ok 为 false，调用方清掉 token 整个重拉。
+    async function changes(user, calHref, token) {
+      const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      const r = await req('REPORT', calHref, {
+        user: user, headers: [['Depth', '1']],
+        body: '<d:sync-collection xmlns:d="DAV:"><d:sync-token>' + esc(token) + '</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>',
+      });
+      if (r.status !== 207) return { ok: false, status: r.status, token: '', changed: [], removed: [] };
+      const doc = xml(r.body);
+      const self = new URL(calHref).pathname.replace(/\/+$/, '');
+      const out = { ok: true, status: 207, token: '', changed: [], removed: [] };
+      Array.from(doc.getElementsByTagNameNS('*', 'response')).forEach((resp) => {
+        const href = text(resp, 'href');
+        if (!href) return;
+        const abs = new URL(href, r.url).href;
+        if (new URL(abs).pathname.replace(/\/+$/, '') === self) return; // 日历自己
+        // 直接挂在 response 下面的 status（不是 propstat 里的）说的是这个地址本身：404 就是删掉了
+        const own = Array.from(resp.children).find((c) => c.localName === 'status');
+        const code = own ? Number((/\s(\d{3})\s?/.exec(own.textContent) || [])[1]) : 0;
+        if (code === 404 || code === 410) out.removed.push(abs);
+        else if (code === 507) out.ok = false; // 结果被截断了：这一轮不作数
+        else out.changed.push({ href: abs, etag: text(resp, 'getetag') });
+      });
+      const tok = Array.from(doc.documentElement.children).find((c) => c.localName === 'sync-token');
+      out.token = tok ? tok.textContent.trim() : '';
+      return out;
+    }
+
+    // 按地址取几条的原文（增量同步里只取变了的那几条），一次最多 50 条
+    async function multiget(user, calHref, hrefs) {
+      const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      const out = [];
+      for (let i = 0; i < hrefs.length; i += 50) {
+        const part = hrefs.slice(i, i + 50);
+        const r = await req('REPORT', calHref, {
+          user: user, headers: [['Depth', '1']],
+          body: '<c:calendar-multiget xmlns:d="DAV:" xmlns:c="' + CALDAV_NS + '"><d:prop><d:getetag/><c:calendar-data/></d:prop>'
+            + part.map((h) => '<d:href>' + esc(new URL(h).pathname) + '</d:href>').join('') + '</c:calendar-multiget>',
+        });
+        if (r.status >= 400) throw fail(r);
+        Array.from(xml(r.body).getElementsByTagNameNS('*', 'response')).forEach((resp) => {
+          const href = text(resp, 'href');
+          const data = text(resp, 'calendar-data');
+          if (href && data) out.push({ href: new URL(href, r.url).href, etag: text(resp, 'getetag'), ics: data });
+        });
+      }
+      return out;
+    }
+
     // 查一条日程在服务器上现在的版本号。不存在时 status 是 404。
     async function etagOf(user, href) {
       const r = await req('PROPFIND', href, {
@@ -131,7 +195,7 @@
       return { ok: (r.status >= 200 && r.status < 300) || r.status === 404, status: r.status };
     }
 
-    return { discover: discover, fetchCalendar: fetchCalendar, etagOf: etagOf, put: put, remove: remove };
+    return { discover: discover, fetchCalendar: fetchCalendar, state: state, changes: changes, multiget: multiget, etagOf: etagOf, put: put, remove: remove };
   }
 
   global.CalDav = { create: create };

@@ -6,6 +6,8 @@
 //   exdates    删掉的那几场：['YYYY-MM-DD', …]（原来那一场的日期）
 //   overrides  单独改过的那几场：{ 'YYYY-MM-DD': { title, date, start, … 只放改过的字段 } }
 //   doneDates  重复待办每一场的完成状态：{ 'YYYY-MM-DD': true }
+//   skipHol    true 表示“遇法定节假日自动跳过”；holEx 是按休班表算出来要跳过的那几场（自动维护，不是用户删的，
+//              关掉开关就整个拿掉；传到 iCloud 时和 exdates 一起写成 EXDATE）
 // 公历的规则全部交给 ics.js 的 parseRRule / expand（每月最后一天、第几个周几这些都在那里测过），这里不再写第二套。
 (function (global) {
   'use strict';
@@ -18,7 +20,7 @@
   const CODE = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
   const MAPS = ['exdates', 'overrides', 'doneDates'];
   // 一个系列共有的属性：不分“仅此次 / 全部”，直接写主条目
-  const SERIES = ['kind', 'countdown', 'star'];
+  const SERIES = ['kind', 'countdown', 'star', 'skipHol'];
   const pad = (n) => String(n).padStart(2, '0');
 
   // ---------- 日期 ----------
@@ -86,7 +88,12 @@
     return ICS.expand([ev], startOf(from), endOf(to)).filter((o) => !o.part || o.part === 1).map((o) => o.date);
   }
 
-  const exSet = (m) => { const s = {}; (Array.isArray(m.exdates) ? m.exdates : []).forEach((k) => { s[k] = true; }); return s; };
+  const exSet = (m) => {
+    const s = {};
+    (Array.isArray(m.exdates) ? m.exdates : []).forEach((k) => { s[k] = true; });
+    if (m.skipHol === true && Array.isArray(m.holEx)) m.holEx.forEach((k) => { s[k] = true; });
+    return s;
+  };
   const dates = (m, from, to) => { const ex = exSet(m); return raw(m, from, to).filter((k) => !ex[k]); };
   const isOcc = (m, k) => isKey(k) && dates(m, k, k).length === 1;
 
@@ -114,6 +121,7 @@
     const ov = (m.overrides && m.overrides[occ]) || {};
     const o = Object.assign({}, m, ov);
     MAPS.forEach((k) => delete o[k]);
+    delete o.holEx;
     o.id = vid(m.id, occ);
     o.masterId = m.id;
     o.occ = occ;
@@ -248,7 +256,7 @@
       setMap(m, 'doneDates', dd);
       delete p.done;
     }
-    SERIES.forEach((k) => { if (k in p) { m[k] = p[k]; delete p[k]; } });
+    SERIES.forEach((k) => { if (k in p) { if (k === 'skipHol' && !p[k]) { delete m.skipHol; delete m.holEx; } else m[k] = p[k]; delete p[k]; } });
     if (!Object.keys(p).length) return { items: items, sel: id };
 
     let sc = scope;
@@ -370,7 +378,7 @@
       const o = isOcc(m, occ) ? occObj(m, occ) : occObj(m, m.date);
       ['title', 'date', 'start', 'end', 'allDay', 'place', 'notes', 'remind', 'due', 'subs'].forEach((k) => { if (k in o) m[k] = o[k]; });
       if (m.kind === 'todo') m.done = !!o.done;
-      ['rrule', 'lunar'].concat(MAPS).forEach((k) => delete m[k]);
+      ['rrule', 'lunar', 'skipHol', 'holEx'].concat(MAPS).forEach((k) => delete m[k]);
       return { sel: m.id };
     }
     m.rrule = next1.rrule;
@@ -382,6 +390,35 @@
     if (isOcc(m, occ)) return { sel: vid(m.id, occ) };
     const n1 = dates(m, occ, addDays(occ, 4000))[0] || firstOcc(m);
     return { sel: n1 ? vid(m.id, n1) : m.id };
+  }
+
+  // ---------- 遇法定节假日自动跳过 ----------
+
+  // off：休班表里所有放假的日子（Lunar.offDays()，排好序的 'YYYY-MM-DD'）。
+  // 开了“遇节假日跳过”的系列：把落在放假日的那几场记进 holEx（表里有哪几年就算哪几年）；没开的把 holEx 拿掉。
+  // 原地改，返回有没有变。规则、开始日期、休班表都没变时不重算（按 id 记着上次的样子）。
+  const holMemo = new Map();
+  function syncHol(items, off) {
+    const list = Array.isArray(off) ? off : [];
+    const offSet = {};
+    list.forEach((k) => { offSet[k] = true; });
+    const stamp = list.length + '|' + (list[0] || '') + '|' + (list[list.length - 1] || '');
+    let changed = false;
+    (Array.isArray(items) ? items : []).forEach((m) => {
+      if (!m || typeof m !== 'object') return;
+      if (m.skipHol !== true || !rule(m)) {
+        if ('holEx' in m) { delete m.holEx; changed = true; }
+        return;
+      }
+      const sig = [m.rrule, m.date, m.lunar ? 1 : 0, stamp, (m.holEx || []).length].join('|');
+      if (holMemo.get(m.id) === sig && Array.isArray(m.holEx)) return;
+      const lo = list.length && list[0] > m.date ? list[0] : m.date;
+      const hi = list.length ? list[list.length - 1] : '';
+      const next1 = hi && hi >= lo ? raw(m, lo, hi).filter((k) => offSet[k]) : [];
+      if (!same(next1, m.holEx || null)) { m.holEx = next1; changed = true; }
+      holMemo.set(m.id, [m.rrule, m.date, m.lunar ? 1 : 0, stamp, next1.length].join('|'));
+    });
+    return changed;
   }
 
   // ---------- 传到 iCloud ----------
@@ -403,7 +440,7 @@
       return 'UNTIL=' + e.getUTCFullYear() + pad(e.getUTCMonth() + 1) + pad(e.getUTCDate()) + 'T' + pad(e.getUTCHours()) + pad(e.getUTCMinutes()) + pad(e.getUTCSeconds()) + 'Z';
     }).join(';');
     const pick = (o) => ({ title: o.title || '', date: o.date, start: o.start || '', end: o.end || '', allDay: !!o.allDay, place: o.place || '', notes: o.notes || '', remind: o.remind });
-    const ex = exSet(m);
+    const ex = exSet(m); // 用户删掉的，加上“遇节假日跳过”算出来的
     const overrides = Object.keys(m.overrides || {}).sort().filter((k) => !ex[k] && isOcc(m, k)).map((k) => ({ occ: k, f: pick(occObj(m, k)) }));
     return Object.assign(pick(m), {
       date: first, rrule: rr,
@@ -419,12 +456,14 @@
   function normalize(items) {
     (Array.isArray(items) ? items : []).forEach((it) => {
       if (!it || typeof it !== 'object') return;
-      const touched = ['rrule', 'lunar'].concat(MAPS).some((k) => k in it);
+      const touched = ['rrule', 'lunar', 'skipHol', 'holEx'].concat(MAPS).some((k) => k in it);
       if (!touched) return;
       if (!rule(it)) {
-        ['rrule', 'lunar'].concat(MAPS).forEach((k) => delete it[k]);
+        ['rrule', 'lunar', 'skipHol', 'holEx'].concat(MAPS).forEach((k) => delete it[k]);
         return;
       }
+      if ('skipHol' in it && it.skipHol !== true) delete it.skipHol;
+      if ('holEx' in it) { if (it.skipHol === true && Array.isArray(it.holEx)) it.holEx = Array.from(new Set(it.holEx.filter(isKey))).sort(); else delete it.holEx; }
       if ('lunar' in it && it.lunar !== true) delete it.lunar;
       if ('exdates' in it) setMap(it, 'exdates', Array.isArray(it.exdates) ? Array.from(new Set(it.exdates.filter(isKey))).sort() : []);
       if ('overrides' in it) {
@@ -444,7 +483,7 @@
   const api = {
     isRepeating: isRepeating, expand: expand, get: get, next: next, nearest: nearest, first: firstOcc,
     edit: edit, remove: remove, setRule: setRule, toForm: toForm, fromForm: fromForm, normalize: normalize,
-    vid: vid, parseVid: parseVid, addDays: addDays, forUpload: forUpload,
+    vid: vid, parseVid: parseVid, addDays: addDays, forUpload: forUpload, syncHol: syncHol, isKey: isKey,
   };
   global.Recur = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

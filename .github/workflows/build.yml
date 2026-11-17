@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  # 先跑单元测试（日期识别、日历解析）；不过就不打包，也不发布。
+  # 先跑单元测试（日期识别、日历解析、同步内核、撤销栈、导入导出）；不过就不打包，也不发布。
   test:
     runs-on: ubuntu-latest
     steps:
@@ -41,6 +41,10 @@ jobs:
 
       - name: 安装打包工具
         run: npm install
+
+      # Rust 侧的单元测试（数据读写回退、iCloud 缓存、域名白名单、窗口摆放、贴边收起的判定……）；不过就不打包
+      - name: Rust 单元测试
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: 打包
         run: npx tauri build

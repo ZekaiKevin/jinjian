@@ -27,7 +27,7 @@ with sync_playwright() as p:
     # ---- 1. 配色 ----
     check('default palette indigo', ev('document.documentElement.dataset.palette') == 'indigo' and css('--bg') == '22 18 36', css('--bg'))
     pg.click('[data-act=settings]'); pg.wait_for_timeout(500)
-    check('palette buttons', ev('[...document.querySelectorAll("#s-palette button")].map(b => b.textContent + ":" + b.getAttribute("aria-pressed"))') == ['默认:true', '石墨灰:false'])
+    check('palette buttons', ev('[...document.querySelectorAll("#s-palette button")].map(b => b.textContent + ":" + b.getAttribute("aria-pressed"))') == ['默认:true', '石墨灰:false', '跟随壁纸:false'])  # 0.9.0 多了“跟随壁纸"
     pg.click('#s-palette [data-v=graphite]'); pg.wait_for_timeout(500)
     check('graphite dark', ev('document.documentElement.dataset.palette') == 'graphite' and css('--bg') == '20 22 26' and css('--sh') == '8 10 14', css('--bg'))
     check('palette saved', ev('JSON.parse(window.__stored).settings.palette') == 'graphite')
@@ -65,7 +65,7 @@ with sync_playwright() as p:
     cp.on('pageerror', lambda e: cerr.append(str(e)))
     cp.add_init_script('window.__sent = []; window.__TAURI__ = { core: { invoke: async (c, a) => { window.__sent.push([c, a]); } }, event: { listen: async (n, f) => { (window.__L = window.__L || {})[n] = f; } } };')
     cp.goto('file://' + ROOT + '/src/capture.html'); cp.wait_for_timeout(500)
-    kind = lambda: cp.evaluate('document.querySelector("[aria-pressed=true]").dataset.kind')
+    kind = lambda: cp.evaluate('document.querySelector("[data-kind][aria-pressed=true]").dataset.kind')  # 0.9.0 起识别出的小胶囊也是开关按钮
     cp.keyboard.type('下午3点前 交周报'); cp.wait_for_timeout(100)
     check('capture: deadline is a todo', kind() == 'todo', kind())
     check('capture: title cleaned', cp.inner_text('#what') == '交周报', cp.inner_text('#what'))

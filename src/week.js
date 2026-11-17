@@ -67,6 +67,25 @@
     return { start: s, end: e };
   }
 
+  // 一条在时间轴上占的分钟。日程按开始 / 结束；待办排成了时间块（有 due 也有 end，0.9.0）也算，
+  // 只有 due 的待办是一个截止时刻，不占时间（返回 null，画成小标记）。
+  function spanOf(it) {
+    if (!it) return null;
+    if (it.kind !== 'todo') return rangeOf(it);
+    const s = toMin(it.due);
+    const e = toMin(it.end);
+    return s !== null && e !== null && e > s ? { start: s, end: e } : null;
+  }
+  // 待办的时间块拖动时当成“有开始 / 结束的一条”来算，算完再换回 due / end
+  // 只有排成了时间块的待办才换；只有截止时刻的（小标记）、没写时间的照旧（拖动只换天）
+  const asTimed = (it) => (it && it.kind === 'todo' && spanOf(it) ? Object.assign({}, it, { start: it.due, allDay: false }) : it);
+  function fromTimed(it, patch) {
+    if (!patch || !it || it.kind !== 'todo') return patch;
+    const p = {};
+    Object.keys(patch).forEach((k) => { p[k === 'start' ? 'due' : k] = patch[k]; });
+    return p;
+  }
+
   // ---------- 重叠排版 ----------
   // list：[{ id, start, end }]（分钟）。返回 { id: { col, cols, span } }：
   // 互相连着重叠的分成一簇，簇里贪心分栏；col 是第几栏，cols 是这一簇共几栏，
@@ -163,6 +182,29 @@
     return { date: dDays ? addDays(it.date, dDays) : it.date };
   }
 
+  // 从顶部一行（或待办栏）拖进时间轴：落在 date 那天，指针所在的那一格是开始（吸附到 15 分钟），默认一小时。
+  // 待办变成时间块（due / end），全天、没写时间的日程变成有时间的。
+  function toBlock(it, date, min, len) {
+    const dur = len > 0 ? len : 60;
+    const top = Math.floor(Math.max(0, LAST - dur) / STEP) * STEP;
+    const start = Math.max(0, Math.min(top, Math.floor(min / STEP) * STEP));
+    const s = fromMin(start);
+    const e = fromMin(Math.min(LAST, start + dur));
+    return it && it.kind === 'todo' ? { date: date, due: s, end: e } : { date: date, allDay: false, start: s, end: e };
+  }
+
+  // 从时间轴拖回顶部一行：待办去掉时间块，日程变成全天
+  function toAllDay(it, date) {
+    return it && it.kind === 'todo' ? { date: date, due: '', end: '' } : { date: date, allDay: true };
+  }
+
+  // 只留真的变了的字段
+  function changed(it, patch) {
+    const out = {};
+    Object.keys(patch || {}).forEach((k) => { if ((patch[k] || '') !== (it[k] || '') && !(typeof patch[k] === 'boolean' && patch[k] === !!it[k])) out[k] = patch[k]; });
+    return out;
+  }
+
   // 跨天的 iCloud 日程在今笺里只读（详情里也是）
   const locked = (it) => !!(it && it.remote && it.parts);
 
@@ -187,6 +229,7 @@
     toMin: toMin, fromMin: fromMin, snap: snap, minToY: minToY, yToMin: yToMin, visEnd: visEnd, rangeOf: rangeOf,
     layout: layout, place: place, colAt: colAt, scrollTop: scrollTop,
     moveTimed: moveTimed, resizeEnd: resizeEnd, createRange: createRange, moveDay: moveDay, locked: locked, drop: drop,
+    spanOf: spanOf, asTimed: asTimed, fromTimed: fromTimed, toBlock: toBlock, toAllDay: toAllDay, changed: changed,
   };
   global.Week = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

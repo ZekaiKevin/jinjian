@@ -58,7 +58,10 @@ with sync_playwright() as p:
         if it['kind'] == 'todo' and not it['done'] and it['date'] < day(0): it['date'] = day(0)
     check('0.7.0 data.json: items written back unchanged (apart from the usual carry-over)', st['items'] == want, [(a, b) for a, b in zip(st['items'], want) if a != b])
     check('0.7.0 data.json: same field order', json.dumps(st['items'], ensure_ascii=False) == json.dumps(want, ensure_ascii=False))
-    check('0.7.0 data.json: note / extras / settings / remote unchanged', all(st[k] == old[k] for k in ['note', 'extras', 'remote']) and st['settings']['palette'] == 'graphite' and st['settings']['fold'] == old['settings']['fold'])
+    check('0.7.0 data.json: note / extras / settings unchanged', all(st[k] == old[k] for k in ['note', 'extras']) and st['settings']['palette'] == 'graphite' and st['settings']['fold'] == old['settings']['fold'])
+    # 0.9.0：iCloud 缓存从 data.json 搬到 remote_cache.json，内容一条不少
+    cache = json.loads(ev('window.__cache || "{}"'))
+    check('0.9.0 migration: remote moved out of data.json into its own cache, nothing lost', 'remote' not in st and {h: (r['etag'], r['ics'], r['cal']) for h, r in cache.get('res', {}).items()} == {h: (r['etag'], r['ics'], r['cal']) for h, r in old['remote']['res'].items()}, list(cache.keys()))
     check('0.7.0 data.json: no page errors', not errs, errs)
 
     # ---- 2. 每周的课：只存一份，每周那一天都显示；月历小点、月视图每一场都有 ----

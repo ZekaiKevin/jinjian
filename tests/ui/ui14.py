@@ -217,7 +217,8 @@ with sync_playwright() as p:
 
     # ---- 待办：没时间的在顶部一行拖到别的天；有时间的小标记也只换天 ----
     rt = w.rect('t1')
-    m = w.drag(rt['cx'], rt['cy'], rt['cx'] + 3 * st, rt['cy'] + 40, mid=lambda: ev('blockOf("t1").style.transform'))
+    # 0.9.0：往下拖进时间轴就是排成时间块了（三、ui17 测），这里只是横着拖、手往下偏一点
+    m = w.drag(rt['cx'], rt['cy'], rt['cx'] + 3 * st, rt['cy'] + 6, mid=lambda: ev('blockOf("t1").style.transform'))
     check('untimed todo dragged along the top row to another day', tf(m) == [round(3 * st, 1), 0.0] and w.item('t1')['date'] == D(5) and ev('blockOf("t1").parentElement.dataset.date') == D(5), [m, w.item('t1')])
     rm = w.rect('t2')
     w.drag(rm['cx'], rm['cy'], rm['cx'] - st, rm['cy'] + 90)
@@ -363,29 +364,34 @@ with sync_playwright() as p:
     pg.wait_for_timeout(5600)
     check('retried by itself and went through', ('DTEND:' + YMD(3) + 'T053000Z') in ev('window.__server[%s].ics' % json.dumps(skey)) and not ev('S.remote.res[%s].dirty' % json.dumps(one)) and w.item(rid)['end'] == '13:30', ev('window.__server[%s].ics' % json.dumps(skey)))
 
-    # iCloud 的重复日程：置灰的选项和详情里一样；选了置灰的 → 弹回原位，提示还是那一句
+    # iCloud 的重复日程（0.9.0）：问范围的小气泡和详情里一样，三项都能选；Esc 弹回原位、什么都不发；
+    # 选“全部”整组挪；Ctrl+Z 把原来那份原样传回去
     cid = ev('R.find(o => o.title === "匹克球" && o.date === %s).id' % json.dumps(D(4)))
     chref = ev('R.find(o => o.id === %s).href' % json.dumps(cid))
     ics0 = ev('S.remote.res[%s].ics' % json.dumps(chref))
     n_put = len(puts())
     r = w.rect(cid)
     w.drag(r['cx'], r['cy'], r['cx'], r['cy'] + 36)   # 晚 45 分钟
-    st8 = ev('(() => ({ open: !document.getElementById("scope").hidden, off: [...document.querySelectorAll("#scope button")].map(x => [x.dataset.v, x.getAttribute("aria-disabled") === "true", x.dataset.tip || ""]), top: parseFloat(blockOf(%s).style.top), drag: S.ask && S.ask.drag }))()' % json.dumps(cid))
-    check('iCloud series: same bubble, 此次及以后 and 全部 greyed with the same tip as in the detail', st8['open'] and st8['drag'] is True and st8['off'] == [['one', False, ''], ['future', True, '这一项请在 Apple 日历里改'], ['all', True, '这一项请在 Apple 日历里改']] and st8['top'] == 10.75 * 48, st8)
+    st8 = ev('(() => ({ open: !document.getElementById("scope").hidden, off: [...document.querySelectorAll("#scope button")].map(x => [x.dataset.v, x.getAttribute("aria-disabled") === "true"]), top: parseFloat(blockOf(%s).style.top), drag: S.ask && S.ask.drag }))()' % json.dumps(cid))
+    check('iCloud series: same bubble, all three choices on (0.9.0)', st8['open'] and st8['drag'] is True and st8['off'] == [['one', False], ['future', False], ['all', False]] and st8['top'] == 10.75 * 48, st8)
     pg.screenshot(path=OUT + 'v80-week-icloud-scope.png', clip={'x': 700, 'y': 0, 'width': 836, 'height': 700})
-    def press(v):   # 置灰的按钮也用真鼠标点
-        r_ = ev('(v) => { const r = document.querySelector("#scope button[data-v=" + v + "]").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }', v)
-        pg.mouse.click(r_[0], r_[1])
-    press('all'); pg.wait_for_timeout(600)
-    tip = ev('document.getElementById("tip").classList.contains("on") && document.getElementById("tip").textContent')
-    check('picked a greyed one: springs back to where it was, existing tip shown, nothing sent', not w.scope_open() and abs(w.rect(cid)['y'] - w.y_of('10:00')) < 0.6 and w.item(cid)['start'] == '10:00' and tip == '这一项请在 Apple 日历里改'
-          and ev('S.remote.res[%s].ics' % json.dumps(chref)) == ics0 and not ev('S.remote.res[%s].dirty' % json.dumps(chref)), [tip, w.item(cid)])
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(600)
+    check('Esc: springs back to where it was, nothing changed', not w.scope_open() and abs(w.rect(cid)['y'] - w.y_of('10:00')) < 0.6 and w.item(cid)['start'] == '10:00'
+          and ev('S.remote.res[%s].ics' % json.dumps(chref)) == ics0 and not ev('S.remote.res[%s].dirty' % json.dumps(chref)), w.item(cid))
     pg.wait_for_timeout(2000)
     check('still nothing sent', len(puts()) == n_put)
     r = w.rect(cid)
     w.drag(r['cx'], r['cy'], r['cx'], r['cy'] + 36)
-    press('future'); pg.wait_for_timeout(500)
-    check('此次及以后 is refused the same way', not w.scope_open() and w.item(cid)['start'] == '10:00' and ev('S.remote.res[%s].ics' % json.dumps(chref)) == ics0)
+    pg.click('#scope button[data-v="all"]'); pg.wait_for_timeout(2400)
+    text = ev('window.__server[Object.keys(window.__server).find(k => window.__server[k].ics.indexOf("SUMMARY:匹克球") >= 0)].ics')
+    later = ev('R.filter(o => o.title === "匹克球").map(o => o.start)')
+    check('全部: the whole series moves to 10:45 (master DTSTART), one PUT', re.search(r'DTSTART;TZID=Asia/Shanghai:\d{8}T104500', text) is not None and 'RRULE:FREQ=WEEKLY' in text and set(later) == {'10:45'} and len(puts()) == n_put + 1, [later[:3], text])
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(300)
+    ev('document.activeElement && document.activeElement.blur()')
+    pg.keyboard.press('Control+z'); pg.wait_for_timeout(2400)
+    text = ev('window.__server[Object.keys(window.__server).find(k => window.__server[k].ics.indexOf("SUMMARY:匹克球") >= 0)].ics')
+    check('Ctrl+Z: reverse PUT puts the exact original back', ev('S.remote.res[%s].ics' % json.dumps(chref)) == ics0 and 'T100000' in text and 'T104500' not in text and len(puts()) == n_put + 2 and w.item(cid)['start'] == '10:00', len(puts()) - n_put)
+    n_put = len(puts())
     r = w.rect(cid)
     w.drag(r['cx'], r['cy'], r['cx'], r['cy'] + 36)
     pg.click('#scope button[data-v="one"]'); pg.wait_for_timeout(400)
